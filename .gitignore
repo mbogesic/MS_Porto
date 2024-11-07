@@ -10,6 +10,11 @@
 *.userosscache
 *.sln.docstates
 
+# Ignore the cache, .venv, and .vscode folders
+cache/
+.venv/
+.vscode/
+
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs
 
