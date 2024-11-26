@@ -1,0 +1,357 @@
+import os
+import pandas as pd
+import networkx as nx
+from mesa import Model
+from mesa.space import NetworkGrid
+from mesa.time import RandomActivation
+
+def extract_route_lengths(nodes_and_edges_folder):
+    route_lengths = {}
+    edges_files = [f for f in os.listdir(nodes_and_edges_folder) if f.endswith("_edges.csv")]
+
+    for edges_file in edges_files:
+        edges_df = pd.read_csv(os.path.join(nodes_and_edges_folder, edges_file))
+
+        # Calculate total length based on traversal order
+        total_length = edges_df["length"].sum()
+        route_key = edges_file.replace("_edges.csv", "")
+        route_lengths[route_key] = total_length
+
+    return route_lengths
+
+class CongestionNetworkGrid(NetworkGrid):
+    def __init__(self, graph):
+        super().__init__(graph)
+        self.edge_congestion = {}  # Track agents on edges
+
+    def place_agent_on_edge(self, agent, u, v):
+        """
+        Place an agent on an edge (u, v) and track congestion.
+        """
+        edge_key = (u, v)
+        if edge_key not in self.edge_congestion:
+            self.edge_congestion[edge_key] = []
+        self.edge_congestion[edge_key].append(agent)
+
+    def remove_agent_from_edge(self, agent, u, v):
+        """
+        Remove an agent from an edge (u, v) and update congestion.
+        """
+        edge_key = (u, v)
+        if edge_key in self.edge_congestion and agent in self.edge_congestion[edge_key]:
+            self.edge_congestion[edge_key].remove(agent)
+            if not self.edge_congestion[edge_key]:
+                del self.edge_congestion[edge_key]
+
+    def get_edge_congestion(self, u, v):
+        """
+        Get the number of agents currently on edge (u, v).
+        """
+        edge_key = (u, v)
+        return len(self.edge_congestion.get(edge_key, []))
+
+class TrafficModel(Model):
+    def __init__(self, nodes_and_edges_folder, num_agents, agent_speed=10, step_time=10):
+        """
+        Initialize the traffic model.
+
+        Parameters:
+            nodes_and_edges_folder: Path to the folder containing the route CSVs
+            num_agents: Number of agents in the simulation
+            agent_speed: Speed of the agents in meters/second
+        """
+        super().__init__()
+        self.nodes_and_edges_folder = nodes_and_edges_folder
+        self.num_agents = num_agents
+        self.agent_speed = agent_speed
+        self.routes = []  # List of routes (subgraphs)
+        self.route_names = []  # List of route names
+        self.route_lengths = extract_route_lengths(nodes_and_edges_folder)  # Extract lengths here
+        self.graph = nx.MultiDiGraph()  # Full graph with all nodes and edges
+        self.schedule = RandomActivation(self)
+        self.grid = CongestionNetworkGrid(self.graph)
+        self.completed_agents = 0
+        self.simulation_finished = False
+        self.step_time = step_time
+
+        # Load all routes (subgraphs) from the folder
+        self.load_routes()
+        
+        # After loading routes
+        print(f"Main graph has {len(self.graph.nodes)} nodes and {len(self.graph.edges)} edges.")
+        print(f"Routes loaded: {len(self.routes)}")
+        print(f"First few nodes: {list(self.graph.nodes)[:5]}")
+        # Print the extracted route lengths
+        for route_name, length in self.route_lengths.items():
+            print(f"Route: {route_name}, Total Length: {length:.2f} meters")
+            
+        for route_graph in self.routes:
+            for node in route_graph.nodes:
+                if node not in self.graph.nodes:
+                    print(f"Node {node} from subgraph not in main graph!")
+
+        # Add agents to the model
+        self.add_agents()
+    
+    def agent_completed(self, agent_id):
+        """
+        Notify the model that an agent has completed its route.
+        This ensures the model's completed_agents counter is updated accurately.
+        """
+        print(f"Agent {agent_id} has completed its journey.")
+        self.completed_agents += 1
+
+    def load_routes(self):
+        """
+        Load all routes from the specified folder into the model.
+        """
+        nodes_files = [f for f in os.listdir(self.nodes_and_edges_folder) if f.endswith("_nodes.csv")]
+        edges_files = [f for f in os.listdir(self.nodes_and_edges_folder) if f.endswith("_edges.csv")]
+
+        self.route_names = []  # Store route names for reference
+
+        for nodes_file, edges_file in zip(sorted(nodes_files), sorted(edges_files)):
+            nodes_df = pd.read_csv(os.path.join(self.nodes_and_edges_folder, nodes_file))
+            edges_df = pd.read_csv(os.path.join(self.nodes_and_edges_folder, edges_file))
+
+            route_graph = nx.MultiDiGraph()
+            for _, row in nodes_df.iterrows():
+                route_graph.add_node(row["node"], **row.to_dict())
+
+            for _, row in edges_df.iterrows():
+                edge_attributes = row.to_dict()
+                start_node = edge_attributes.pop("start_node")
+                end_node = edge_attributes.pop("end_node")
+                length = edge_attributes.pop("length", None)
+
+                route_graph.add_edge(
+                    start_node,
+                    end_node,
+                    length=length,
+                    **edge_attributes
+                )
+
+            self.routes.append(route_graph)
+            self.route_names.append(nodes_file.split("_nodes.csv")[0])  # Extract route name from file
+
+            for node, data in route_graph.nodes(data=True):
+                self.graph.add_node(node, **data)
+            for u, v, key, data in route_graph.edges(keys=True, data=True):
+                self.graph.add_edge(u, v, key=key, **data)
+
+        for node in self.graph.nodes:
+            if "agent" not in self.graph.nodes[node]:
+                self.graph.nodes[node]["agent"] = []
+                
+            for route_graph in self.routes:
+                for node in route_graph.nodes:
+                    if node not in self.graph.nodes:
+                        print(f"Node {node} from subgraph not in main graph!")
+
+        print(f"Loaded {len(self.routes)} routes from {self.nodes_and_edges_folder}")
+
+    def add_agents(self):
+        """
+        Add agents to the model, assigning fixed start and end nodes based on the route.
+        """
+        for i in range(self.num_agents):
+            # Assign a random route to the agent
+            route_index = self.random.randint(0, len(self.routes) - 1)
+            route_graph = self.routes[route_index]
+            route_name = self.route_names[route_index]  # Full route name, e.g., "Asprela_2_Campo_Alegre_route_1"
+
+            # Determine the fixed start and end nodes
+            if route_name.startswith("Asprela_"):
+                start_node = 4523960189
+                end_node = 479183608
+                origin = "Asprela"
+                destination = "Campo Alegre"
+            elif route_name.startswith("Campo_Alegre_"):
+                start_node = 479183608
+                end_node = 4523960189
+                origin = "Campo Alegre"
+                destination = "Asprela"
+            else:
+                print(f"Route name {route_name} does not match expected prefixes. Skipping agent {i}.")
+                continue
+
+            # Debugging: Print assigned route and nodes
+            print(f"Agent {i} - {origin} -> {destination}, Route: {route_name}")
+
+            # Ensure the start and end nodes exist in the main graph
+            if start_node not in self.graph.nodes or end_node not in self.graph.nodes:
+                print(f"Skipping agent {i} due to invalid start or end node.")
+                continue
+
+            # Create and place the agent
+            agent = TrafficAgent(
+                self.next_id(),
+                self,
+                start_node=start_node,
+                end_node=end_node,
+                route_graph=route_graph,
+                route_name=route_name,  # Pass the full route name
+                speed=self.agent_speed,
+                step_time=self.step_time,
+            )
+            self.schedule.add(agent)
+
+            # Place the agent on the grid
+            self.grid.place_agent(agent, start_node)
+
+
+    def step(self):
+        """
+        Advance the simulation by one step.
+        """
+        if self.completed_agents >= self.num_agents:
+            print("All agents have completed their journeys. Stopping simulation.")
+            self.simulation_finished = True  # Mark the simulation as finished
+            return  # Prevent further steps
+        self.schedule.step()  # Let all agents take their actions
+
+        # Count completed agents
+        print(f"Total completed agents: {self.completed_agents}")
+
+
+class TrafficAgent:
+    def __init__(self, unique_id, model, start_node, end_node, route_graph, route_name, speed=10, step_time=10):
+        """
+        Initialize the traffic agent.
+
+        Parameters:
+            unique_id: Unique identifier for the agent
+            model: The simulation model
+            start_node: The starting node for the agent
+            end_node: The destination node for the agent
+            route_graph: The subgraph representing the agent's route
+            route_name: The unique name of the route the agent is on
+            speed: Speed of the agent in meters/second
+        """
+        self.unique_id = unique_id
+        self.model = model
+        self.current_node = start_node
+        self.pos = start_node  # Add the position attribute for MESA's NetworkGrid
+        self.end_node = end_node
+        self.route_graph = route_graph
+        self.route_name = route_name  # Store the full route name
+        self.speed = speed
+        self.step_time = step_time # Step time in seconds (aka one simulation step equals this many seconds)
+        self.step_cnt = 0  # Counter for the number of steps taken
+        self.distance_travelled = 0.0  # Initialize distance travelled
+        self.elapsed_time = 0.0
+        self.completed = False
+        self.counted = False
+        self.route_length = self.model.route_lengths[self.route_name]
+        self.route_edges = list(self.route_graph.edges(data=True))
+        self.current_edge_index = 0
+        self.edge_travelled = 0.0
+
+        # Load total route length
+        self.route_length = self.model.route_lengths[self.route_name]
+        
+        # Determine origin and destination 
+        if start_node == 4523960189:
+            self.origin = "Asprela"
+            self.destination = "Campo Alegre"
+        elif start_node == 479183608:
+            self.origin = "Campo Alegre"
+            self.destination = "Asprela"
+            
+         # Track visited edges and cumulative distances
+        self.route_edges = list(self.route_graph.edges(data=True))
+        self.current_edge_index = 0
+        self.edge_travelled = 0.0  # Distance travelled on the current edge
+        
+    def get_remaining_nodes_count(self):
+        """
+        Get the number of nodes left to visit on the route based on current edge index.
+        """
+        # Remaining nodes are the nodes connected to edges from the current edge index onward
+        remaining_edges = self.route_edges[self.current_edge_index:]
+        remaining_nodes = set(edge[1] for edge in remaining_edges)  # Target nodes of remaining edges
+        remaining_nodes.add(self.end_node)  # Ensure the end node is counted
+        return len(remaining_nodes)
+    
+    def move(self):
+        """
+        Move the agent along its route based on the distance travelled.
+        """
+        # Increment step counter and calculate distance travelled
+        self.step_cnt += 1
+        distance_this_step = self.speed * self.step_time
+        self.distance_travelled += distance_this_step
+        self.elapsed_time += self.step_time
+
+        # Check if the agent has completed the route
+        if self.distance_travelled >= self.route_length:
+            if not self.completed:
+                self.distance_travelled = self.route_length  # Cap at total route length
+                self.completed = True
+                self.model.agent_completed(self.unique_id)
+                print(f"Agent {self.unique_id} has completed its journey.")
+            return
+
+        # Calculate travel along the current edge
+        current_edge = self.route_edges[self.current_edge_index]
+        edge_length = current_edge[2]["length"]
+
+        # Move along the edge and check if the edge is completed
+        self.edge_travelled += distance_this_step
+        while self.edge_travelled >= edge_length:
+            # Move to the next edge
+            self.edge_travelled -= edge_length
+            self.current_edge_index += 1
+
+            # Update the current edge and its length
+            if self.current_edge_index < len(self.route_edges):
+                current_edge = self.route_edges[self.current_edge_index]
+                edge_length = current_edge[2]["length"]
+            else:
+                break
+
+        # Update the current node based on the current edge
+        self.current_node = current_edge[1]  # Target node of the current edge
+        self.pos = self.current_node  # Update position in the grid
+
+        # Calculate progress percentage
+        progress_percentage = round((self.distance_travelled / self.route_length) * 100, 2)
+        remaining_nodes_count = self.get_remaining_nodes_count()
+        
+        # Debugging output
+        print(
+            f"Agent {self.unique_id} moving from {self.origin} to {self.destination}. Route: {self.route_name[-1]}. "
+            f"Distance travelled: {self.distance_travelled:.2f} meters ({progress_percentage:.2f}% completed). "
+            f"Elapsed time: {self.elapsed_time:.2f} seconds. Nodes left: {remaining_nodes_count-1}."
+        )
+
+
+
+    def step(self):
+        """
+        Execute one step for the agent.
+        """
+        self.move()
+
+
+# Main execution
+if __name__ == "__main__":
+    # Define parameters
+    nodes_and_edges_folder = "nodes_and_edges"
+    num_agents = 50
+    agent_speed = 3.9583333     # m/s (assuming an avg speed of 14.25km/h)
+    step_time_dimension = 1.0   # s/step aka the "resolution" of the simulation
+
+    # Initialize the model
+    model = TrafficModel(nodes_and_edges_folder, num_agents, agent_speed, step_time_dimension)
+
+    # # Run the simulation for a few steps
+    # for i in range(100):
+    #     print(f"--- Step {i + 1} ---")
+    #     model.step()
+    # Run the simulation until every agent has finished his travel
+    step_count = 0
+    while not model.simulation_finished:
+        print(f"--- Step {step_count} ---")
+        model.step()
+        step_count += 1
