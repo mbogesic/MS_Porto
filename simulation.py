@@ -51,29 +51,39 @@ class CongestionNetworkGrid(NetworkGrid):
         return len(self.edge_congestion.get(edge_key, []))
 
 class TrafficModel(Model):
-    def __init__(self, nodes_and_edges_folder, num_agents, agent_speed=10, step_time=10):
+    def __init__(self, nodes_and_edges_folder, num_agents, agent_speed=10, step_time=10, combined_nodes_file=None, combined_edges_file=None):
         """
         Initialize the traffic model.
 
         Parameters:
-            nodes_and_edges_folder: Path to the folder containing the route CSVs
+            nodes_and_edges_folder: Folder containing route CSVs
             num_agents: Number of agents in the simulation
-            agent_speed: Speed of the agents in meters/second
+            agent_speed: Speed of the agents (meters/second)
+            step_time: Time per step (seconds)
+            combined_nodes_file: Path to the combined subgraph nodes CSV file (optional)
+            combined_edges_file: Path to the combined subgraph edges CSV file (optional)
         """
         super().__init__()
+        
+        # Load the combined subgraph
+        # self.load_combined_subgraph(combined_nodes_file, combined_edges_file)
+
         self.nodes_and_edges_folder = nodes_and_edges_folder
         self.num_agents = num_agents
         self.agent_speed = agent_speed
         self.routes = []  # List of routes (subgraphs)
         self.route_names = []  # List of route names
         self.route_lengths = extract_route_lengths(nodes_and_edges_folder)  # Extract lengths here
-        self.graph = nx.MultiDiGraph()  # Full graph with all nodes and edges
+        self.graph = nx.MultiDiGraph()
         self.schedule = RandomActivation(self)
         self.grid = CongestionNetworkGrid(self.graph)
         self.completed_agents = 0
         self.simulation_finished = False
         self.step_time = step_time
-
+        self.step_count = 0
+        self.routes_visuals = []
+        self.node_positions = []
+        
         # Load all routes (subgraphs) from the folder
         self.load_routes()
         
@@ -105,8 +115,10 @@ class TrafficModel(Model):
         """
         Load all routes from the specified folder into the model.
         """
-        nodes_files = [f for f in os.listdir(self.nodes_and_edges_folder) if f.endswith("_nodes.csv")]
-        edges_files = [f for f in os.listdir(self.nodes_and_edges_folder) if f.endswith("_edges.csv")]
+        nodes_files = [f for f in os.listdir(self.nodes_and_edges_folder) 
+               if f.endswith("_nodes.csv") and not f.startswith("all")]
+        edges_files = [f for f in os.listdir(self.nodes_and_edges_folder) 
+               if f.endswith("_edges.csv") and not f.startswith("all")]
 
         self.route_names = []  # Store route names for reference
 
@@ -115,6 +127,8 @@ class TrafficModel(Model):
             edges_df = pd.read_csv(os.path.join(self.nodes_and_edges_folder, edges_file))
 
             route_graph = nx.MultiDiGraph()
+            route_graph_visuals = nx.MultiDiGraph()
+            
             for _, row in nodes_df.iterrows():
                 route_graph.add_node(row["node"], **row.to_dict())
 
@@ -138,7 +152,39 @@ class TrafficModel(Model):
                 self.graph.add_node(node, **data)
             for u, v, key, data in route_graph.edges(keys=True, data=True):
                 self.graph.add_edge(u, v, key=key, **data)
+            
+            # Add nodes with geographical positions
+            for _, row in nodes_df.iterrows():
+                route_graph_visuals.add_node(row["node"], x=row["x"], y=row["y"])
 
+            # Add edges
+            for _, row in edges_df.iterrows():
+                edge_attributes = row.to_dict()
+                start_node = edge_attributes.pop("start_node")
+                end_node = edge_attributes.pop("end_node")
+                route_graph_visuals.add_edge(start_node, end_node, **edge_attributes)
+                
+            self.routes_visuals.append(route_graph_visuals)
+        
+
+        # Precompute node positions for visualization
+        for route_graph_visuals in self.routes_visuals:
+            node_positions = {
+                node: (data["x"], data["y"])
+                for node, data in route_graph_visuals.nodes(data=True)
+            }
+            self.node_positions.append(node_positions)
+
+        # Compute bounds for visualization
+        x_coords = []
+        y_coords = []
+        for positions in self.node_positions:  # Iterate over the list of position dictionaries
+            x_coords.extend(pos[0] for pos in positions.values())
+            y_coords.extend(pos[1] for pos in positions.values())
+
+        self.min_x, self.max_x = min(x_coords), max(x_coords)
+        self.min_y, self.max_y = min(y_coords), max(y_coords)
+        
         for node in self.graph.nodes:
             if "agent" not in self.graph.nodes[node]:
                 self.graph.nodes[node]["agent"] = []
@@ -148,7 +194,44 @@ class TrafficModel(Model):
                     if node not in self.graph.nodes:
                         print(f"Node {node} from subgraph not in main graph!")
 
+        # Normalize the node positions for alignment with image dimensions
+        self.scaled_positions = {}
+        for positions in self.node_positions:  # Iterate over all node positions
+            for node, pos in positions.items():
+                self.scaled_positions[node] = (
+                    (pos[0] - self.min_x) / (self.max_x - self.min_x),  # Normalize x
+                    (pos[1] - self.min_y) / (self.max_y - self.min_y)   # Normalize y
+                )
+                
         print(f"Loaded {len(self.routes)} routes from {self.nodes_and_edges_folder}")
+
+    def load_combined_subgraph(self, nodes_file, edges_file):
+        """
+        Load the combined subgraph directly from nodes and edges CSV files.
+        """
+        nodes_df = pd.read_csv(nodes_file)
+        edges_df = pd.read_csv(edges_file)
+
+        self.combined_subgraph = nx.MultiDiGraph()
+
+        # Add nodes with geographical positions
+        for _, row in nodes_df.iterrows():
+            self.combined_subgraph.add_node(row["node"], x=row["x"], y=row["y"])
+
+        # Add edges
+        for _, row in edges_df.iterrows():
+            edge_attributes = row.to_dict()
+            start_node = edge_attributes.pop("start_node")
+            end_node = edge_attributes.pop("end_node")
+            self.combined_subgraph.add_edge(start_node, end_node, **edge_attributes)
+
+        # Precompute node positions for visualization
+        self.node_positions = {
+            node: (data["x"], data["y"])
+            for node, data in self.combined_subgraph.nodes(data=True)
+        }
+
+        print(f"Combined subgraph loaded with {len(self.combined_subgraph.nodes)} nodes and {len(self.combined_subgraph.edges)} edges.")
 
     def add_agents(self):
         """
@@ -199,11 +282,12 @@ class TrafficModel(Model):
             # Place the agent on the grid
             self.grid.place_agent(agent, start_node)
 
-
     def step(self):
         """
         Advance the simulation by one step.
         """
+        print(f"--- Step {self.step_count} ---")
+        self.step_count += 1
         if self.completed_agents >= self.num_agents:
             print("All agents have completed their journeys. Stopping simulation.")
             self.simulation_finished = True  # Mark the simulation as finished
@@ -212,7 +296,6 @@ class TrafficModel(Model):
 
         # Count completed agents
         print(f"Total completed agents: {self.completed_agents}")
-
 
 class TrafficAgent:
     def __init__(self, unique_id, model, start_node, end_node, route_graph, route_name, speed=10, step_time=10):
@@ -338,15 +421,24 @@ class TrafficAgent:
 if __name__ == "__main__":
     # Define parameters
     nodes_and_edges_folder = "nodes_and_edges"
-    num_agents = 50
+    combined_nodes_file = os.path.join(nodes_and_edges_folder, "all_routes_combined_nodes.csv")
+    combined_edges_file = os.path.join(nodes_and_edges_folder, "all_routes_combined_edges.csv")
+    num_agents = 1
     agent_speed = 3.9583333     # m/s (assuming an avg speed of 14.25km/h)
     step_time_dimension = 1.0   # s/step aka the "resolution" of the simulation
 
     # Initialize the model
-    model = TrafficModel(nodes_and_edges_folder, num_agents, agent_speed, step_time_dimension)
+    model = TrafficModel(
+        nodes_and_edges_folder,
+        num_agents, 
+        agent_speed, 
+        step_time_dimension, 
+        combined_nodes_file=combined_nodes_file,
+        combined_edges_file=combined_edges_file
+    )
 
     # # Run the simulation for a few steps
-    # for i in range(100):
+    # for i in range(5):
     #     print(f"--- Step {i + 1} ---")
     #     model.step()
     # Run the simulation until every agent has finished his travel
