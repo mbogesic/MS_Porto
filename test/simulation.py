@@ -335,7 +335,15 @@ class TrafficModel(Model):
             if start_node not in self.graph.nodes or end_node not in self.graph.nodes:
                 print(f"Skipping agent {i} due to invalid start or end node.")
                 continue
-        
+            
+            # Check speed of the agent according to chosen route
+            if "Bike" in route_name:
+                agent_speed = 3.0555556  # m/s (assuming an avg speed of 11km/h)
+            elif "Car" in route_name:
+                agent_speed = self.agent_speed
+            elif "PublicTransport" in route_name:
+                agent_speed = self.agent_speed
+            
             # Create and place the agent
             agent = TrafficAgent(
                 self.next_id(),
@@ -345,7 +353,7 @@ class TrafficModel(Model):
                 route_graph=route_graph,
                 route_name=route_name,  # Pass the full route name
                 normalized_route_edges=self.normalized_route_edges[route_index],  # Get normalized route edges
-                speed=self.agent_speed,
+                speed=agent_speed,
                 step_time=self.step_time,
             )
             self.schedule.add(agent)

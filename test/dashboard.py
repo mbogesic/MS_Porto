@@ -88,7 +88,8 @@ html.Div([
 )
 def update_dashboard(n):
     global co2_emissions_over_time  # Access the global variable
-    
+    car_co2_emission_factor = 0.17 # g/m - According to https://ourworldindata.org/travel-carbon-footprint
+    pt_co2_emission_factor = 0.097  # g/m 
     # Step the model
     if not model.simulation_finished:
         model.step()
@@ -102,11 +103,11 @@ def update_dashboard(n):
     num_agents_c2a_pt = len([agent for agent in model.schedule.agents if agent.route_name == "Campo_Alegre_2_Asprela_PublicTransport"])
 
     # KPIs
-    total_co2_emissions = sum(agent.distance_travelled * 0.2 for agent in model.schedule.agents)
-    a2c_pt_co2_emissions = sum(agent.distance_travelled * 0.2 for agent in model.schedule.agents if agent.route_name == "Asprela_2_Campo_Alegre_PublicTransport")
-    a2c_car_co2_emissions = sum(agent.distance_travelled * 0.2 for agent in model.schedule.agents if agent.route_name == "Asprela_2_Campo_Alegre_Car")
-    c2a_car_co2_emissions = sum(agent.distance_travelled * 0.2 for agent in model.schedule.agents if agent.route_name == "Campo_Alegre_2_Asprela_Car")
-    c2a_pt_co2_emissions = sum(agent.distance_travelled * 0.2 for agent in model.schedule.agents if agent.route_name == "Campo_Alegre_2_Asprela_PublicTransport")
+    a2c_pt_co2_emissions = sum(agent.distance_travelled * pt_co2_emission_factor for agent in model.schedule.agents if agent.route_name == "Asprela_2_Campo_Alegre_PublicTransport")
+    a2c_car_co2_emissions = sum(agent.distance_travelled * car_co2_emission_factor for agent in model.schedule.agents if agent.route_name == "Asprela_2_Campo_Alegre_Car")
+    c2a_car_co2_emissions = sum(agent.distance_travelled * car_co2_emission_factor for agent in model.schedule.agents if agent.route_name == "Campo_Alegre_2_Asprela_Car")
+    c2a_pt_co2_emissions = sum(agent.distance_travelled * pt_co2_emission_factor for agent in model.schedule.agents if agent.route_name == "Campo_Alegre_2_Asprela_PublicTransport")
+    total_co2_emissions = a2c_pt_co2_emissions + a2c_car_co2_emissions + c2a_car_co2_emissions + c2a_pt_co2_emissions
     completion_rate = f"{model.completed_agents}/{model.num_agents} agents completed"
 
     # Append the current total CO2 emissions to the global list
