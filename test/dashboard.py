@@ -7,6 +7,11 @@ import os
 from PIL import Image
 import base64
 
+# Automatically change the working directory to the script's location
+script_dir = os.path.dirname(os.path.abspath(__file__))  # Get the script's directory
+os.chdir(script_dir)  # Change the working directory
+
+print(f"Working directory changed to: {os.getcwd()}")
 # Load the Traffic Model (Ensure your model script is accessible)
 from simulation import TrafficModel
 
@@ -14,7 +19,7 @@ from simulation import TrafficModel
 nodes_and_edges_folder = "nodes_and_edges"
 combined_nodes_file = os.path.join(nodes_and_edges_folder, "all_routes_combined_nodes.csv")
 combined_edges_file = os.path.join(nodes_and_edges_folder, "all_routes_combined_edges.csv")
-num_agents = 5
+num_agents = 30
 agent_speed = 3.9583333     # m/s (assuming an avg speed of 14.25km/h)
 step_time_dimension = 3.0   # s/step aka the "resolution" of the simulation
 
@@ -36,14 +41,26 @@ app.title = "AMC Simulation Dashboard"
 app.layout = html.Div([
     html.H1("AMC Simulation Dashboard"),
     
-    # KPIs Section
+html.Div([
+    # First column for KPIs and plots
     html.Div([
-        html.Div(id="kpi-co2", style={"width": "30%", "display": "inline-block"}),
-        html.Div(id="kpi-completion", style={"width": "30%", "display": "inline-block"}),
-    ], style={"margin-bottom": "20px"}),
+        html.Div([
+            html.H3(id="kpi-co2-total", style={"text-align": "left", "margin-bottom": "10px"}),  
+            html.Div(id="kpi-co2-a2c", style={"width": "100%", "margin-bottom": "10px", "text-align": "left"}),  
+            html.Div(id="kpi-co2-c2a", style={"width": "100%", "margin-bottom": "10px", "text-align": "left"}),  
+            html.Div(id="kpi-completion", style={"width": "100%", "margin-bottom": "10px", "text-align": "left"}),  
+        ], style={"margin-bottom": "20px", "display": "flex", "flex-direction": "column", "align-items": "flex-start"}),
 
-    # Graph Visualization
-    dcc.Graph(id="route-graph"),
+        # Optional: Placeholder for additional plots
+        dcc.Graph(id="metric-plot", style={"width": "100%", "height": "400px"}),  # Adjust height as needed
+    ], style={"flex": "1", "padding": "10px"}),  # First column styling
+
+    # Second column for the graph visualization
+    html.Div([
+        dcc.Graph(id="route-graph", style={"width": "100%", "height": "600px"}),  # Adjust height as needed
+    ], style={"flex": "2", "padding": "10px"}),  # Second column styling
+], style={"display": "flex", "flex-direction": "row", "width": "100%"}),
+
 
     # Interval for periodic updates
     dcc.Interval(
@@ -56,7 +73,9 @@ app.layout = html.Div([
 # Callbacks to Update Metrics and Visualizations
 @app.callback(
     [
-        Output("kpi-co2", "children"),
+        Output("kpi-co2-total", "children"),
+        Output("kpi-co2-a2c", "children"),
+        Output("kpi-co2-c2a", "children"),
         Output("kpi-completion", "children"),
         Output("route-graph", "figure"),
     ],
@@ -69,8 +88,20 @@ def update_dashboard(n):
     if not model.simulation_finished:
         model.step()
 
+    # Agent information
+    num_agents_a2c_bike = len([agent for agent in model.schedule.agents if agent.route_name == "Asprela_2_Campo_Alegre_Bike"])
+    num_agents_a2c_car = len([agent for agent in model.schedule.agents if agent.route_name == "Asprela_2_Campo_Alegre_Car"])
+    num_agents_a2c_pt = len([agent for agent in model.schedule.agents if agent.route_name == "Asprela_2_Campo_Alegre_PublicTransport"])
+    num_agents_c2a_bike = len([agent for agent in model.schedule.agents if agent.route_name == "Campo_Alegre_2_Asprela_Bike"])
+    num_agents_c2a_car = len([agent for agent in model.schedule.agents if agent.route_name == "Campo_Alegre_2_Asprela_Car"])
+    num_agents_c2a_pt = len([agent for agent in model.schedule.agents if agent.route_name == "Campo_Alegre_2_Asprela_PublicTransport"])
+
     # KPIs
-    co2_emissions = sum(agent.distance_travelled * 0.2 for agent in model.schedule.agents)
+    total_co2_emissions = sum(agent.distance_travelled * 0.2 for agent in model.schedule.agents)
+    a2c_pt_co2_emissions = sum(agent.distance_travelled * 0.2 for agent in model.schedule.agents if agent.route_name == "Asprela_2_Campo_Alegre_PublicTransport")
+    a2c_car_co2_emissions = sum(agent.distance_travelled * 0.2 for agent in model.schedule.agents if agent.route_name == "Asprela_2_Campo_Alegre_Car")
+    c2a_car_co2_emissions = sum(agent.distance_travelled * 0.2 for agent in model.schedule.agents if agent.route_name == "Campo_Alegre_2_Asprela_Car")
+    c2a_pt_co2_emissions = sum(agent.distance_travelled * 0.2 for agent in model.schedule.agents if agent.route_name == "Campo_Alegre_2_Asprela_PublicTransport")
     completion_rate = f"{model.completed_agents}/{model.num_agents} agents completed"
 
     # Create figure with background image
@@ -111,12 +142,12 @@ def update_dashboard(n):
                 showlegend=False
             ))
     # Add legend for routes
-    route_labels = ['A -> CA - Route 1 (5501.72m)', 
-                    'A -> CA - Route 2 (6037.01m)', 
-                    'A -> CA - Route 3 (7593.82m)', 
-                    'CA -> A - Route 1 (5486.20m)', 
-                    'CA -> A - Route 2 (6671.41m)', 
-                    'CA -> A - Route 3 (6984.30m)']
+    route_labels = ['A -> CA - Bike (5501.72m)', 
+                    'A -> CA - Car (6037.01m)', 
+                    'A -> CA - Public Transport (7593.82m)', 
+                    'CA -> A - Bike (5486.20m)', 
+                    'CA -> A - Car (6671.41m)', 
+                    'CA -> A - Public Transport (6984.30m)']
     for color, label in zip(routes_colors, route_labels):
         fig.add_trace(go.Scatter(
             x=[None], y=[None],
@@ -125,37 +156,37 @@ def update_dashboard(n):
             name=label,  # Add legend entry
         ))
         
-    for agent in model.schedule.agents:
-        if not agent.completed:
-            # Ensure we are accessing the correct normalized route edges
-            if agent.current_edge_index < len(agent.normalized_route_edges):
-                edge = agent.normalized_route_edges[agent.current_edge_index]
-                x0, y0 = edge["start_pos"]
-                x1, y1 = edge["end_pos"]
+    # for agent in model.schedule.agents:
+    #     if not agent.completed:
+    #         # Ensure we are accessing the correct normalized route edges
+    #         if agent.current_edge_index < len(agent.normalized_route_edges):
+    #             edge = agent.normalized_route_edges[agent.current_edge_index]
+    #             x0, y0 = edge["start_pos"]
+    #             x1, y1 = edge["end_pos"]
 
-                # Calculate the interpolation factor
-                edge_length = edge["length"]
-                interpolation_factor = agent.edge_travelled / edge_length
+    #             # Calculate the interpolation factor
+    #             edge_length = edge["length"]
+    #             interpolation_factor = agent.edge_travelled / edge_length
 
-                # Interpolated position
-                x = x0 + interpolation_factor * (x1 - x0)
-                y = y0 + interpolation_factor * (y1 - y0)
+    #             # Interpolated position
+    #             x = x0 + interpolation_factor * (x1 - x0)
+    #             y = y0 + interpolation_factor * (y1 - y0)
 
-                # # Debugging: Check if the agent's route matches the visualization
-                # print(f"Agent {agent.unique_id} is on edge: {edge['start_node']} -> {edge['end_node']}")
-                # print(f"Position: ({x:.2f}, {y:.2f}), Interpolation Factor: {interpolation_factor:.2f}")
+    #             # # Debugging: Check if the agent's route matches the visualization
+    #             # print(f"Agent {agent.unique_id} is on edge: {edge['start_node']} -> {edge['end_node']}")
+    #             # print(f"Position: ({x:.2f}, {y:.2f}), Interpolation Factor: {interpolation_factor:.2f}")
 
-                # Plot the agent
-                fig.add_trace(go.Scatter(
-                    x=[x], y=[y],
-                    mode="markers",
-                    marker=dict(size=10, color="beige", symbol="circle"),
-                    name=f"Agent {agent.unique_id}",
-                    showlegend=True
-                ))
+    #             # Plot the agent
+    #             fig.add_trace(go.Scatter(
+    #                 x=[x], y=[y],
+    #                 mode="markers",
+    #                 marker=dict(size=10, color="beige", symbol="circle"),
+    #                 name=f"Agent {agent.unique_id}",
+    #                 showlegend=True
+    #             ))
 
         fig.update_layout(
-            title="Traffic Simulation",
+            title="Route Network",
             xaxis=dict(visible=False, range=[0, 1], scaleanchor="y"),
             yaxis=dict(visible=False, range=[0, 1]),
             showlegend=True,
@@ -173,7 +204,9 @@ def update_dashboard(n):
         )
         
     return (
-        f"CO2 Emissions: {co2_emissions:.2f} g",
+        f"Total CO2 Emissions: {total_co2_emissions:.2f} g",
+        dcc.Markdown(f"CO2 Emissions for Asprela -> Campo Alegre:\n- Bike: {num_agents_a2c_bike} Agents\n- Car: {num_agents_a2c_car} Agents ({a2c_car_co2_emissions:.2f} g)\n- Public Transport: {num_agents_a2c_pt} Agents ({a2c_pt_co2_emissions:.2f} g)"),
+        dcc.Markdown(f"CO2 Emissions for Campo Alegre -> Asprela:\n- Bike: {num_agents_c2a_bike} Agents\n- Car: {num_agents_c2a_car} Agents ({c2a_car_co2_emissions:.2f} g)\n- Public Transport: {num_agents_c2a_pt} Agents ({c2a_pt_co2_emissions:.2f} g)"),
         completion_rate,
         fig,
     )

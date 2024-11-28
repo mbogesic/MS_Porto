@@ -5,6 +5,12 @@ from mesa import Model
 from mesa.space import NetworkGrid
 from mesa.time import RandomActivation
 
+# Automatically change the working directory to the script's location
+script_dir = os.path.dirname(os.path.abspath(__file__))  # Get the script's directory
+os.chdir(script_dir)  # Change the working directory
+
+print(f"Working directory changed to: {os.getcwd()}")
+
 def extract_route_lengths(nodes_and_edges_folder):
     route_lengths = {}
     edges_files = [f for f in os.listdir(nodes_and_edges_folder) if f.endswith("_edges.csv")]
@@ -473,7 +479,7 @@ class TrafficAgent:
         
         # Debugging output
         print(
-            f"Agent {self.unique_id} moving from {self.origin} to {self.destination}. Route: {self.route_name[-1]}. "
+            f"Agent {self.unique_id} moving from {self.origin} to {self.destination}. Travel-Mode: {self.route_name.split('_')[-1]}. "
             f"Distance travelled: {self.distance_travelled:.2f} meters ({progress_percentage:.2f}% completed). "
             f"Elapsed time: {self.elapsed_time:.2f} seconds. Nodes left: {remaining_nodes_count-1}."
         )
@@ -483,6 +489,7 @@ class TrafficAgent:
         Execute one step for the agent.
         """
         self.move()
+
 
 # Main execution
 if __name__ == "__main__":
@@ -505,13 +512,13 @@ if __name__ == "__main__":
     )
 
     # Run the simulation for a few steps
-    for i in range(1):
-        print(f"--- Step {i + 1} ---")
-        model.step()
+    # for i in range(1):
+    #     print(f"--- Step {i + 1} ---")
+    #     model.step()
         
     # Run the simulation until every agent has finished his travel
-    # step_count = 0
-    # while not model.simulation_finished:
-    #     print(f"--- Step {step_count} ---")
-    #     model.step()
-    #     step_count += 1
+    step_count = 0
+    while not model.simulation_finished:
+        print(f"--- Step {step_count} ---")
+        model.step()
+        step_count += 1
