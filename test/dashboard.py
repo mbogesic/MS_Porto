@@ -22,6 +22,8 @@ combined_edges_file = os.path.join(nodes_and_edges_folder, "all_routes_combined_
 num_agents = 30
 agent_speed = 3.9583333     # m/s (assuming an avg speed of 14.25km/h)
 step_time_dimension = 3.0   # s/step aka the "resolution" of the simulation
+# Global list to track CO2 emissions over time
+co2_emissions_over_time = []
 
 # Initialize the model
 model = TrafficModel(
@@ -78,12 +80,15 @@ html.Div([
         Output("kpi-co2-c2a", "children"),
         Output("kpi-completion", "children"),
         Output("route-graph", "figure"),
+        Output("metric-plot", "figure"),
     ],
     [
         Input("interval-component", "n_intervals"),
     ]
 )
 def update_dashboard(n):
+    global co2_emissions_over_time  # Access the global variable
+    
     # Step the model
     if not model.simulation_finished:
         model.step()
@@ -104,24 +109,28 @@ def update_dashboard(n):
     c2a_pt_co2_emissions = sum(agent.distance_travelled * 0.2 for agent in model.schedule.agents if agent.route_name == "Campo_Alegre_2_Asprela_PublicTransport")
     completion_rate = f"{model.completed_agents}/{model.num_agents} agents completed"
 
-    # Create figure with background image
+    # Append the current total CO2 emissions to the global list
+    co2_emissions_over_time.append(total_co2_emissions)
+    
+    # Time Series Plot for CO2 Emissions
+    co2_time_series = go.Figure(
+        data=[
+            go.Scatter(
+                x=list(range(len(co2_emissions_over_time))),  # X-axis: time steps
+                y=co2_emissions_over_time,  # Y-axis: CO2 emissions
+                mode="lines+markers",
+                name="Total CO2 Emissions",
+            )
+        ],
+        layout=go.Layout(
+            title="Total CO2 Emissions Over Time",
+            xaxis=dict(title=f"Time Steps ({step_time_dimension}s/step)"),
+            yaxis=dict(title="CO2 Emissions (g)"),
+        ),
+    )
+    
+    # Create figure for Street Network
     fig = go.Figure()
-
-    # # Add the PNG as a background image
-    # fig.add_layout_image(
-    #     dict(
-    #         source=background_image_encoded,
-    #         x=0,
-    #         y=1,
-    #         xref="paper",
-    #         yref="paper",
-    #         sizex=1,
-    #         sizey=1,
-    #         xanchor="left",
-    #         yanchor="top",
-    #         layer="below"
-    #     )
-    # )
 
     routes_colors = ['rgba(0, 128, 0, 0.8)', 
                      'rgba(0, 0, 255, 0.8)', 
@@ -156,35 +165,6 @@ def update_dashboard(n):
             name=label,  # Add legend entry
         ))
         
-    # for agent in model.schedule.agents:
-    #     if not agent.completed:
-    #         # Ensure we are accessing the correct normalized route edges
-    #         if agent.current_edge_index < len(agent.normalized_route_edges):
-    #             edge = agent.normalized_route_edges[agent.current_edge_index]
-    #             x0, y0 = edge["start_pos"]
-    #             x1, y1 = edge["end_pos"]
-
-    #             # Calculate the interpolation factor
-    #             edge_length = edge["length"]
-    #             interpolation_factor = agent.edge_travelled / edge_length
-
-    #             # Interpolated position
-    #             x = x0 + interpolation_factor * (x1 - x0)
-    #             y = y0 + interpolation_factor * (y1 - y0)
-
-    #             # # Debugging: Check if the agent's route matches the visualization
-    #             # print(f"Agent {agent.unique_id} is on edge: {edge['start_node']} -> {edge['end_node']}")
-    #             # print(f"Position: ({x:.2f}, {y:.2f}), Interpolation Factor: {interpolation_factor:.2f}")
-
-    #             # Plot the agent
-    #             fig.add_trace(go.Scatter(
-    #                 x=[x], y=[y],
-    #                 mode="markers",
-    #                 marker=dict(size=10, color="beige", symbol="circle"),
-    #                 name=f"Agent {agent.unique_id}",
-    #                 showlegend=True
-    #             ))
-
         fig.update_layout(
             title="Route Network",
             xaxis=dict(visible=False, range=[0, 1], scaleanchor="y"),
@@ -209,6 +189,7 @@ def update_dashboard(n):
         dcc.Markdown(f"CO2 Emissions for Campo Alegre -> Asprela:\n- Bike: {num_agents_c2a_bike} Agents\n- Car: {num_agents_c2a_car} Agents ({c2a_car_co2_emissions:.2f} g)\n- Public Transport: {num_agents_c2a_pt} Agents ({c2a_pt_co2_emissions:.2f} g)"),
         completion_rate,
         fig,
+        co2_time_series,
     )
     
 # Run the App
