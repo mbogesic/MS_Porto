@@ -57,7 +57,7 @@ class CongestionNetworkGrid(NetworkGrid):
         return len(self.edge_congestion.get(edge_key, []))
 
 class TrafficModel(Model):
-    def __init__(self, nodes_and_edges_folder, num_agents, agent_speed=10, step_time=10, combined_nodes_file=None, combined_edges_file=None):
+    def __init__(self, nodes_and_edges_folder, num_agents, agent_speed=3.9583333, step_time=10, combined_nodes_file=None, combined_edges_file=None):
         """
         Initialize the traffic model.
 
@@ -328,8 +328,8 @@ class TrafficModel(Model):
                 print(f"Route name {route_name} does not match expected prefixes. Skipping agent {i}.")
                 continue
 
-            # Debugging: Print assigned route and nodes
-            print(f"Agent {i} - {origin} -> {destination}, Route: {route_name}")
+            # # Debugging: Print assigned route and nodes
+            # print(f"Agent {i} - {origin} -> {destination}, Route: {route_name}")
 
             # Ensure the start and end nodes exist in the main graph
             if start_node not in self.graph.nodes or end_node not in self.graph.nodes:
@@ -358,9 +358,9 @@ class TrafficModel(Model):
             )
             self.schedule.add(agent)
 
-            print(f"Agent {agent.unique_id} assigned route: {route_name}")
-            for edge in agent.normalized_route_edges:
-                print(f"  {edge['start_node']} -> {edge['end_node']}, Length: {edge['length']}")
+            # print(f"Agent {agent.unique_id} assigned route: {route_name}")
+            # for edge in agent.normalized_route_edges:
+            #     print(f"  {edge['start_node']} -> {edge['end_node']}, Length: {edge['length']}")
         
             # Place the agent on the grid
             self.grid.place_agent(agent, start_node)
@@ -496,7 +496,8 @@ class TrafficAgent:
         """
         Execute one step for the agent.
         """
-        self.move()
+        if self.completed == False:
+            self.move()
 
 
 # Main execution

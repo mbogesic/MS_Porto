@@ -19,17 +19,15 @@ from simulation import TrafficModel
 nodes_and_edges_folder = "nodes_and_edges"
 combined_nodes_file = os.path.join(nodes_and_edges_folder, "all_routes_combined_nodes.csv")
 combined_edges_file = os.path.join(nodes_and_edges_folder, "all_routes_combined_edges.csv")
-num_agents = 30
-agent_speed = 3.9583333     # m/s (assuming an avg speed of 14.25km/h)
-step_time_dimension = 3.0   # s/step aka the "resolution" of the simulation
+num_agents = 500
+step_time_dimension = 10.0   # s/step aka the "resolution" of the simulation
 # Global list to track CO2 emissions over time
 co2_emissions_over_time = []
 
 # Initialize the model
 model = TrafficModel(
         nodes_and_edges_folder,
-        num_agents, 
-        agent_speed, 
+        num_agents,  
         step_time_dimension, 
         combined_nodes_file=combined_nodes_file,
         combined_edges_file=combined_edges_file
@@ -48,6 +46,7 @@ html.Div([
     html.Div([
         html.Div([
             html.H3(id="kpi-co2-total", style={"text-align": "left", "margin-bottom": "10px"}),  
+            html.Div(id="kpi-co2-increase", style={"width": "100%", "margin-bottom": "10px", "text-align": "left"}), 
             html.Div(id="kpi-co2-a2c", style={"width": "100%", "margin-bottom": "10px", "text-align": "left"}),  
             html.Div(id="kpi-co2-c2a", style={"width": "100%", "margin-bottom": "10px", "text-align": "left"}),  
             html.Div(id="kpi-completion", style={"width": "100%", "margin-bottom": "10px", "text-align": "left"}),  
@@ -76,6 +75,7 @@ html.Div([
 @app.callback(
     [
         Output("kpi-co2-total", "children"),
+        Output("kpi-co2-increase", "children"),
         Output("kpi-co2-a2c", "children"),
         Output("kpi-co2-c2a", "children"),
         Output("kpi-completion", "children"),
@@ -109,7 +109,11 @@ def update_dashboard(n):
     c2a_pt_co2_emissions = sum(agent.distance_travelled * pt_co2_emission_factor for agent in model.schedule.agents if agent.route_name == "Campo_Alegre_2_Asprela_PublicTransport")
     total_co2_emissions = a2c_pt_co2_emissions + a2c_car_co2_emissions + c2a_car_co2_emissions + c2a_pt_co2_emissions
     completion_rate = f"{model.completed_agents}/{model.num_agents} agents completed"
-
+    # Calculate CO2 emission rate
+    if len(co2_emissions_over_time) > 0:
+        co2_increase_rate = (total_co2_emissions - co2_emissions_over_time[-1]) / step_time_dimension
+    else:
+        co2_increase_rate = 0
     # Append the current total CO2 emissions to the global list
     co2_emissions_over_time.append(total_co2_emissions)
     
@@ -140,15 +144,31 @@ def update_dashboard(n):
                      'rgba(255, 0, 255, 1)', 
                      'rgba(0, 255, 255, 0.8)' ]
     
+    width_normalization_factor = 200
+    a2c_car_width = 1 + a2c_car_co2_emissions / (num_agents_a2c_car * width_normalization_factor)
+    a2c_pt_width = 1 + a2c_pt_co2_emissions / (num_agents_a2c_pt * width_normalization_factor)
+    c2a_car_width = 1 + c2a_car_co2_emissions / (num_agents_c2a_car * width_normalization_factor)
+    c2a_pt_width = 1 + c2a_pt_co2_emissions / (num_agents_c2a_pt * width_normalization_factor)
+    
     # Add edges using scaled positions
-    for route, color in zip(model.routes_visuals, routes_colors):
+    for route, name, color in zip(model.routes_visuals, model.route_names, routes_colors):
+        if name == "Asprela_2_Campo_Alegre_Car":
+            width = a2c_car_width
+        elif name == "Asprela_2_Campo_Alegre_PublicTransport":
+            width = a2c_pt_width
+        elif name == "Campo_Alegre_2_Asprela_Car":
+            width = c2a_car_width
+        elif name == "Campo_Alegre_2_Asprela_PublicTransport":
+            width = c2a_pt_width
+        else:
+            width = 1  # Default width for other routes
         for edge in route.edges:
             x0, y0 = model.scaled_positions[edge[0]]
             x1, y1 = model.scaled_positions[edge[1]]
             fig.add_trace(go.Scatter(
                 x=[x0, x1], y=[y0, y1],
                 mode="lines",
-                line=dict(color=color, width=1),
+                line=dict(color=color, width=width),
                 showlegend=False
             ))
     # Add legend for routes
@@ -186,6 +206,7 @@ def update_dashboard(n):
         
     return (
         f"Total CO2 Emissions: {total_co2_emissions:.2f} g",
+        dcc.Markdown(f"(Increase Rate: {co2_increase_rate:.2f} g/s)"),
         dcc.Markdown(f"CO2 Emissions for Asprela -> Campo Alegre:\n- Bike: {num_agents_a2c_bike} Agents\n- Car: {num_agents_a2c_car} Agents ({a2c_car_co2_emissions:.2f} g)\n- Public Transport: {num_agents_a2c_pt} Agents ({a2c_pt_co2_emissions:.2f} g)"),
         dcc.Markdown(f"CO2 Emissions for Campo Alegre -> Asprela:\n- Bike: {num_agents_c2a_bike} Agents\n- Car: {num_agents_c2a_car} Agents ({c2a_car_co2_emissions:.2f} g)\n- Public Transport: {num_agents_c2a_pt} Agents ({c2a_pt_co2_emissions:.2f} g)"),
         completion_rate,
