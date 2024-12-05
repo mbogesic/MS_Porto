@@ -95,3 +95,44 @@ def calculate_parking_reduction(baseline_parked_cars: int, current_parked_cars: 
 #    baseline_parked_cars=2000,
 #    current_parked_cars=1500)
 #print(f"Reduction in parked cars: {parking_reduction:.2f}%")
+
+def calculate_car_trip_reduction(
+    baseline_car_trips: int,
+    current_car_trips: int
+) -> float:
+    if baseline_car_trips <= 0:
+        raise ValueError("Baseline car trips must be greater than zero.") 
+    # Calculate percentage reduction in car trips
+    reduction_percentage = ((baseline_car_trips - current_car_trips) / baseline_car_trips) * 100
+    return reduction_percentage
+
+# Example usage
+#car_trip_reduction = calculate_car_trip_reduction(
+#    baseline_car_trips=10000,
+#    current_car_trips=8500)
+#print(f"Reduction in car trips to the city center: {car_trip_reduction:.2f}%")
+
+def calculate_peak_parking_reduction(baseline_peak_parking: int, current_peak_parking: int) -> float:
+    if baseline_peak_parking <= 0:
+        raise ValueError("Baseline peak parking demand must be greater than zero.")  
+    # Calculate percentage reduction in peak parking demand
+    reduction_percentage = ((baseline_peak_parking - current_peak_parking) / baseline_peak_parking) * 100   
+    return reduction_percentage
+
+# Example usage
+#peak_parking_reduction = calculate_peak_parking_reduction(
+#    baseline_peak_parking=500,
+#    current_peak_parking=400)
+#print(f"Reduction in peak parking demand: {peak_parking_reduction:.2f}%")
+
+def calculate_revenue_growth(baseline_revenue: float, current_revenue: float) -> float:
+    if baseline_revenue <= 0:
+        raise ValueError("Baseline revenue must be greater than zero.")  
+    # Calculate revenue growth percentage
+    revenue_growth_percentage = ((current_revenue - baseline_revenue) / baseline_revenue) * 100   
+    return revenue_growth_percentage
+# Example usage
+#revenue_growth = calculate_revenue_growth(
+#    baseline_revenue=100000.0,
+#    current_revenue=120000.0)
+#print(f"Growth in revenue from dynamic pricing: {revenue_growth:.2f}%")
