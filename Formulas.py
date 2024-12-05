@@ -105,7 +105,6 @@ def calculate_car_trip_reduction(
     # Calculate percentage reduction in car trips
     reduction_percentage = ((baseline_car_trips - current_car_trips) / baseline_car_trips) * 100
     return reduction_percentage
-
 # Example usage
 #car_trip_reduction = calculate_car_trip_reduction(
 #    baseline_car_trips=10000,
@@ -118,7 +117,6 @@ def calculate_peak_parking_reduction(baseline_peak_parking: int, current_peak_pa
     # Calculate percentage reduction in peak parking demand
     reduction_percentage = ((baseline_peak_parking - current_peak_parking) / baseline_peak_parking) * 100   
     return reduction_percentage
-
 # Example usage
 #peak_parking_reduction = calculate_peak_parking_reduction(
 #    baseline_peak_parking=500,
