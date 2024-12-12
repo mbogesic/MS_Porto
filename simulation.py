@@ -4,6 +4,7 @@ import networkx as nx
 from mesa import Model
 from mesa.space import NetworkGrid
 from mesa.time import RandomActivation
+import Formulas as f
 
 # Automatically change the working directory to the script's location
 script_dir = os.path.dirname(os.path.abspath(__file__))  # Get the script's directory
@@ -57,14 +58,13 @@ class CongestionNetworkGrid(NetworkGrid):
         return len(self.edge_congestion.get(edge_key, []))
 
 class TrafficModel(Model):
-    def __init__(self, nodes_and_edges_folder, num_agents, agent_speed=3.9583333, step_time=10, combined_nodes_file=None, combined_edges_file=None):
+    def __init__(self, nodes_and_edges_folder, num_agents, step_time=10, combined_nodes_file=None, combined_edges_file=None):
         """
         Initialize the traffic model.
 
         Parameters:
             nodes_and_edges_folder: Folder containing route CSVs
             num_agents: Number of agents in the simulation
-            agent_speed: Speed of the agents (meters/second)
             step_time: Time per step (seconds)
             combined_nodes_file: Path to the combined subgraph nodes CSV file (optional)
             combined_edges_file: Path to the combined subgraph edges CSV file (optional)
@@ -76,7 +76,6 @@ class TrafficModel(Model):
 
         self.nodes_and_edges_folder = nodes_and_edges_folder
         self.num_agents = num_agents
-        self.agent_speed = agent_speed
         self.routes = []  # List of routes (subgraphs)
         self.route_names = []  # List of route names
         self.route_lengths = extract_route_lengths(nodes_and_edges_folder)  # Extract lengths here
@@ -323,10 +322,8 @@ class TrafficModel(Model):
             # Check speed of the agent according to chosen route
             if "Bike" in route_name:
                 agent_speed = 3.0555556  # m/s (assuming an avg speed of 11km/h)
-            elif "Car" in route_name:
-                agent_speed = self.agent_speed
-            elif "PublicTransport" in route_name:
-                agent_speed = self.agent_speed
+            elif "Car" or "PublicTransport" in route_name:
+                agent_speed = 3.9583333 # m/s (assuming an avg speed of 14.25km/h)
             
             # Create and place the agent
             agent = TrafficAgent(
@@ -486,14 +483,12 @@ if __name__ == "__main__":
     combined_nodes_file = os.path.join(nodes_and_edges_folder, "all_routes_combined_nodes.csv")
     combined_edges_file = os.path.join(nodes_and_edges_folder, "all_routes_combined_edges.csv")
     num_agents = 1
-    agent_speed = 3.9583333     # m/s (assuming an avg speed of 14.25km/h)
     step_time_dimension = 1.0   # s/step aka the "resolution" of the simulation
 
     # Initialize the model
     model = TrafficModel(
         nodes_and_edges_folder,
         num_agents, 
-        agent_speed, 
         step_time_dimension, 
         combined_nodes_file=combined_nodes_file,
         combined_edges_file=combined_edges_file
