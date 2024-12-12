@@ -5,6 +5,12 @@ from mesa import Model
 from mesa.space import NetworkGrid
 from mesa.time import RandomActivation
 
+# Automatically change the working directory to the script's location
+script_dir = os.path.dirname(os.path.abspath(__file__))  # Get the script's directory
+os.chdir(script_dir)  # Change the working directory
+
+print(f"Working directory changed to: {os.getcwd()}")
+
 def extract_route_lengths(nodes_and_edges_folder):
     route_lengths = {}
     edges_files = [f for f in os.listdir(nodes_and_edges_folder) if f.endswith("_edges.csv")]
@@ -51,7 +57,7 @@ class CongestionNetworkGrid(NetworkGrid):
         return len(self.edge_congestion.get(edge_key, []))
 
 class TrafficModel(Model):
-    def __init__(self, nodes_and_edges_folder, num_agents, agent_speed=10, step_time=10, combined_nodes_file=None, combined_edges_file=None):
+    def __init__(self, nodes_and_edges_folder, num_agents, agent_speed=3.9583333, step_time=10, combined_nodes_file=None, combined_edges_file=None):
         """
         Initialize the traffic model.
 
@@ -111,6 +117,25 @@ class TrafficModel(Model):
         print(f"Agent {agent_id} has completed its journey.")
         self.completed_agents += 1
 
+    def get_ordered_edges(self, graph, start_node, end_node):
+        """
+        Return edges of the graph sorted in path-like order from start_node to end_node.
+        Falls back to unsorted edges if no path is found.
+        """
+        if nx.has_path(graph, start_node, end_node):
+            path = nx.shortest_path(graph, source=start_node, target=end_node)
+            ordered_edges = [
+                (path[i], path[i + 1], graph.get_edge_data(path[i], path[i + 1])[0])
+                for i in range(len(path) - 1)
+            ]
+        else:
+            print(f"Warning: Falling back to unsorted edges for {graph}.")
+            ordered_edges = [
+                (u, v, data)
+                for u, v, data in graph.edges(data=True)
+            ]
+        return ordered_edges
+
     def load_routes(self):
         """
         Load all routes from the specified folder into the model.
@@ -121,7 +146,8 @@ class TrafficModel(Model):
                if f.endswith("_edges.csv") and not f.startswith("all")]
 
         self.route_names = []  # Store route names for reference
-
+        self.all_ordered_routes = []
+        
         for nodes_file, edges_file in zip(sorted(nodes_files), sorted(edges_files)):
             nodes_df = pd.read_csv(os.path.join(self.nodes_and_edges_folder, nodes_file))
             edges_df = pd.read_csv(os.path.join(self.nodes_and_edges_folder, edges_file))
@@ -144,7 +170,20 @@ class TrafficModel(Model):
                     length=length,
                     **edge_attributes
                 )
+            
+            # Determine the route's start and end nodes
+            if "Asprela" in nodes_file:
+                start_node, end_node = 4523960189, 479183608
+            elif "Campo_Alegre" in nodes_file:
+                start_node, end_node = 479183608, 4523960189
+            else:
+                print(f"Unknown route type in {nodes_file}")
+                continue
 
+            # Get the ordered edges for the route
+            ordered_edges = self.get_ordered_edges(route_graph, start_node, end_node)
+            self.all_ordered_routes.append(ordered_edges)
+            
             self.routes.append(route_graph)
             self.route_names.append(nodes_file.split("_nodes.csv")[0])  # Extract route name from file
 
@@ -165,8 +204,11 @@ class TrafficModel(Model):
                 route_graph_visuals.add_edge(start_node, end_node, **edge_attributes)
                 
             self.routes_visuals.append(route_graph_visuals)
-        
-
+            
+            print(f"Outgoing edges from {start_node}:")
+            for _, v, data in route_graph.out_edges(start_node, data=True):
+                print(f"  {start_node} -> {v}, Length: {data.get('length', 0)}")
+      
         # Precompute node positions for visualization
         for route_graph_visuals in self.routes_visuals:
             node_positions = {
@@ -203,6 +245,21 @@ class TrafficModel(Model):
                     (pos[1] - self.min_y) / (self.max_y - self.min_y)   # Normalize y
                 )
                 
+        self.normalized_route_edges = []  # Add a container for normalized route edges
+        
+        # Normalize edges for visualization
+        normalized_edges = []
+        for route in self.all_ordered_routes:
+            for u, v, data in route:
+                normalized_edges.append({
+                    "start_node": u,
+                    "end_node": v,
+                    "start_pos": self.scaled_positions[u],
+                    "end_pos": self.scaled_positions[v],
+                    "length": data.get("length", 0),
+                })
+            self.normalized_route_edges.append(normalized_edges)
+        
         print(f"Loaded {len(self.routes)} routes from {self.nodes_and_edges_folder}")
 
     def load_combined_subgraph(self, nodes_file, edges_file):
@@ -258,14 +315,19 @@ class TrafficModel(Model):
                 print(f"Route name {route_name} does not match expected prefixes. Skipping agent {i}.")
                 continue
 
-            # Debugging: Print assigned route and nodes
-            print(f"Agent {i} - {origin} -> {destination}, Route: {route_name}")
-
             # Ensure the start and end nodes exist in the main graph
             if start_node not in self.graph.nodes or end_node not in self.graph.nodes:
                 print(f"Skipping agent {i} due to invalid start or end node.")
                 continue
-
+            
+            # Check speed of the agent according to chosen route
+            if "Bike" in route_name:
+                agent_speed = 3.0555556  # m/s (assuming an avg speed of 11km/h)
+            elif "Car" in route_name:
+                agent_speed = self.agent_speed
+            elif "PublicTransport" in route_name:
+                agent_speed = self.agent_speed
+            
             # Create and place the agent
             agent = TrafficAgent(
                 self.next_id(),
@@ -274,11 +336,12 @@ class TrafficModel(Model):
                 end_node=end_node,
                 route_graph=route_graph,
                 route_name=route_name,  # Pass the full route name
-                speed=self.agent_speed,
+                normalized_route_edges=self.normalized_route_edges[route_index],  # Get normalized route edges
+                speed=agent_speed,
                 step_time=self.step_time,
             )
             self.schedule.add(agent)
-
+        
             # Place the agent on the grid
             self.grid.place_agent(agent, start_node)
 
@@ -298,7 +361,7 @@ class TrafficModel(Model):
         print(f"Total completed agents: {self.completed_agents}")
 
 class TrafficAgent:
-    def __init__(self, unique_id, model, start_node, end_node, route_graph, route_name, speed=10, step_time=10):
+    def __init__(self, unique_id, model, start_node, end_node, route_graph, route_name, normalized_route_edges, speed=10, step_time=10):
         """
         Initialize the traffic agent.
 
@@ -329,9 +392,7 @@ class TrafficAgent:
         self.route_edges = list(self.route_graph.edges(data=True))
         self.current_edge_index = 0
         self.edge_travelled = 0.0
-
-        # Load total route length
-        self.route_length = self.model.route_lengths[self.route_name]
+        self.normalized_route_edges = normalized_route_edges
         
         # Determine origin and destination 
         if start_node == 4523960189:
@@ -340,11 +401,12 @@ class TrafficAgent:
         elif start_node == 479183608:
             self.origin = "Campo Alegre"
             self.destination = "Asprela"
-            
-         # Track visited edges and cumulative distances
-        self.route_edges = list(self.route_graph.edges(data=True))
-        self.current_edge_index = 0
-        self.edge_travelled = 0.0  # Distance travelled on the current edge
+    
+    def get_assigned_route_edges(self):
+        """
+        Returns the list of edges (with data) that define the agent's route.
+        """
+        return self.route_edges
         
     def get_remaining_nodes_count(self):
         """
@@ -375,27 +437,29 @@ class TrafficAgent:
                 print(f"Agent {self.unique_id} has completed its journey.")
             return
 
-        # Calculate travel along the current edge
-        current_edge = self.route_edges[self.current_edge_index]
-        edge_length = current_edge[2]["length"]
+        # Ensure the agent moves along valid edges
+        if self.current_edge_index < len(self.route_edges):
+            current_edge = self.route_edges[self.current_edge_index]
+            edge_length = current_edge[2]["length"]
 
-        # Move along the edge and check if the edge is completed
-        self.edge_travelled += distance_this_step
-        while self.edge_travelled >= edge_length:
-            # Move to the next edge
-            self.edge_travelled -= edge_length
-            self.current_edge_index += 1
+            # Move along the edge and check if the edge is completed
+            self.edge_travelled += distance_this_step
+            while self.edge_travelled >= edge_length:
+                # Move to the next edge
+                self.edge_travelled -= edge_length
+                self.current_edge_index += 1
 
-            # Update the current edge and its length
-            if self.current_edge_index < len(self.route_edges):
-                current_edge = self.route_edges[self.current_edge_index]
-                edge_length = current_edge[2]["length"]
-            else:
-                break
+                # Ensure the new edge belongs to the agent's route graph
+                if self.current_edge_index < len(self.route_edges):
+                    current_edge = self.route_edges[self.current_edge_index]
+                    edge_length = current_edge[2]["length"]
+                else:
+                    break
 
         # Update the current node based on the current edge
         self.current_node = current_edge[1]  # Target node of the current edge
         self.pos = self.current_node  # Update position in the grid
+
 
         # Calculate progress percentage
         progress_percentage = round((self.distance_travelled / self.route_length) * 100, 2)
@@ -403,19 +467,17 @@ class TrafficAgent:
         
         # Debugging output
         print(
-            f"Agent {self.unique_id} moving from {self.origin} to {self.destination}. Route: {self.route_name[-1]}. "
+            f"Agent {self.unique_id} moving from {self.origin} to {self.destination}. Travel-Mode: {self.route_name.split('_')[-1]}. "
             f"Distance travelled: {self.distance_travelled:.2f} meters ({progress_percentage:.2f}% completed). "
             f"Elapsed time: {self.elapsed_time:.2f} seconds. Nodes left: {remaining_nodes_count-1}."
         )
-
-
 
     def step(self):
         """
         Execute one step for the agent.
         """
-        self.move()
-
+        if self.completed == False:
+            self.move()
 
 # Main execution
 if __name__ == "__main__":
@@ -437,10 +499,11 @@ if __name__ == "__main__":
         combined_edges_file=combined_edges_file
     )
 
-    # # Run the simulation for a few steps
-    # for i in range(5):
+    # Run the simulation for a few steps
+    # for i in range(1):
     #     print(f"--- Step {i + 1} ---")
     #     model.step()
+        
     # Run the simulation until every agent has finished his travel
     step_count = 0
     while not model.simulation_finished:
