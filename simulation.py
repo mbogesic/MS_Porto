@@ -5,6 +5,7 @@ from mesa import Model
 from mesa.space import NetworkGrid
 from mesa.time import RandomActivation
 import Formulas as f
+import random
 
 # Automatically change the working directory to the script's location
 script_dir = os.path.dirname(os.path.abspath(__file__))  # Get the script's directory
@@ -58,7 +59,7 @@ class CongestionNetworkGrid(NetworkGrid):
         return len(self.edge_congestion.get(edge_key, []))
 
 class TrafficModel(Model):
-    def __init__(self, nodes_and_edges_folder, num_agents, step_time=10, combined_nodes_file=None, combined_edges_file=None):
+    def __init__(self, nodes_and_edges_folder, num_agents, step_time=10, episodes=100, alpha=0.1, gamma=0.9, epsilon=0.1, combined_nodes_file=None, combined_edges_file=None):
         """
         Initialize the traffic model.
 
@@ -68,6 +69,10 @@ class TrafficModel(Model):
             step_time: Time per step (seconds)
             combined_nodes_file: Path to the combined subgraph nodes CSV file (optional)
             combined_edges_file: Path to the combined subgraph edges CSV file (optional)
+            episodes: Number of episodes for the Q-learning loop
+            alpha: Learning rate for Q-learning
+            gamma: Discount factor for Q-learning
+            epsilon: Exploration probability for Q-learning
         """
         super().__init__()
         
@@ -79,35 +84,51 @@ class TrafficModel(Model):
         self.routes = []  # List of routes (subgraphs)
         self.route_names = []  # List of route names
         self.route_lengths = extract_route_lengths(nodes_and_edges_folder)  # Extract lengths here
-        self.graph = nx.MultiDiGraph()
-        self.schedule = RandomActivation(self)
-        self.grid = CongestionNetworkGrid(self.graph)
-        self.completed_agents = 0
         self.simulation_finished = False
         self.step_time = step_time
         self.step_count = 0
         self.routes_visuals = []
         self.node_positions = []
         
-        # Load all routes (subgraphs) from the folder
-        self.load_routes()
+        self.episodes = episodes
+        self.alpha = alpha
+        self.gamma = gamma
+        self.epsilon = epsilon
+        self.current_episode = 0
+        self.simulation_finished = False
         
-        # After loading routes
-        print(f"Main graph has {len(self.graph.nodes)} nodes and {len(self.graph.edges)} edges.")
-        print(f"Routes loaded: {len(self.routes)}")
-        print(f"First few nodes: {list(self.graph.nodes)[:5]}")
-        # Print the extracted route lengths
-        for route_name, length in self.route_lengths.items():
-            print(f"Route: {route_name}, Total Length: {length:.2f} meters")
-            
-        for route_graph in self.routes:
-            for node in route_graph.nodes:
-                if node not in self.graph.nodes:
-                    print(f"Node {node} from subgraph not in main graph!")
+        # Q-table: Nested dictionary for state-action pairs
+        self.q_table = {}
+        
+        # Load routes and agents
+        self.load_routes()
+        self.validate_routes()
+        
+        # Initialize environment and agents
+        self.reset_environment()
 
-        # Add agents to the model
+    def reset_environment(self):
+        """Reset the simulation environment while retaining Q-table."""
+        self.schedule = RandomActivation(self)
+        self.completed_agents = 0
+        self.simulation_finished = False
+        self.step_count = 0
+
         self.add_agents()
-    
+        
+        # # After loading routes
+        # print(f"Main graph has {len(self.graph.nodes)} nodes and {len(self.graph.edges)} edges.")
+        # print(f"Routes loaded: {len(self.routes)}")
+        # print(f"First few nodes: {list(self.graph.nodes)[:5]}")
+        # # Print the extracted route lengths
+        # for route_name, length in self.route_lengths.items():
+        #     print(f"Route: {route_name}, Total Length: {length:.2f} meters")
+            
+        # for route_graph in self.routes:
+        #     for node in route_graph.nodes:
+        #         if node not in self.graph.nodes:
+        #             print(f"Node {node} from subgraph not in main graph!")
+        
     def agent_completed(self, agent_id):
         """
         Notify the model that an agent has completed its route.
@@ -139,6 +160,10 @@ class TrafficModel(Model):
         """
         Load all routes from the specified folder into the model.
         """
+        
+        self.graph = nx.MultiDiGraph()
+        self.grid = CongestionNetworkGrid(self.graph)
+        
         nodes_files = [f for f in os.listdir(self.nodes_and_edges_folder) 
                if f.endswith("_nodes.csv") and not f.startswith("all")]
         edges_files = [f for f in os.listdir(self.nodes_and_edges_folder) 
@@ -207,7 +232,9 @@ class TrafficModel(Model):
             print(f"Outgoing edges from {start_node}:")
             for _, v, data in route_graph.out_edges(start_node, data=True):
                 print(f"  {start_node} -> {v}, Length: {data.get('length', 0)}")
-      
+                
+        print(f"Loaded {len(self.routes)} routes and {len(self.route_names)} route names.")
+        
         # Precompute node positions for visualization
         for route_graph_visuals in self.routes_visuals:
             node_positions = {
@@ -261,6 +288,12 @@ class TrafficModel(Model):
         
         print(f"Loaded {len(self.routes)} routes from {self.nodes_and_edges_folder}")
 
+    def validate_routes(self):
+        """Validate the integrity of the loaded routes."""
+        if len(self.routes) != len(self.route_names):
+            raise ValueError(f"Mismatch between routes ({len(self.routes)}) and route names ({len(self.route_names)})!")
+
+
     def load_combined_subgraph(self, nodes_file, edges_file):
         """
         Load the combined subgraph directly from nodes and edges CSV files.
@@ -287,8 +320,8 @@ class TrafficModel(Model):
             for node, data in self.combined_subgraph.nodes(data=True)
         }
 
-        print(f"Combined subgraph loaded with {len(self.combined_subgraph.nodes)} nodes and {len(self.combined_subgraph.edges)} edges.")
-
+        # print(f"Combined subgraph loaded with {len(self.combined_subgraph.nodes)} nodes and {len(self.combined_subgraph.edges)} edges.")
+        
     def add_agents(self):
         """
         Add agents to the model, assigning fixed start and end nodes based on the route.
@@ -296,6 +329,9 @@ class TrafficModel(Model):
         for i in range(self.num_agents):
             # Assign a random route to the agent
             route_index = self.random.randint(0, len(self.routes) - 1)
+            if route_index >= len(self.route_names):
+                raise IndexError(f"Generated route_index {route_index} exceeds route_names size {len(self.route_names)}")
+
             route_graph = self.routes[route_index]
             route_name = self.route_names[route_index]  # Full route name, e.g., "Asprela_2_Campo_Alegre_route_1"
 
@@ -303,13 +339,13 @@ class TrafficModel(Model):
             if route_name.startswith("Asprela_"):
                 start_node = 4523960189
                 end_node = 479183608
-                origin = "Asprela"
-                destination = "Campo Alegre"
+                # origin = "Asprela"
+                # destination = "Campo Alegre"
             elif route_name.startswith("Campo_Alegre_"):
                 start_node = 479183608
                 end_node = 4523960189
-                origin = "Campo Alegre"
-                destination = "Asprela"
+                # origin = "Campo Alegre"
+                # destination = "Asprela"
             else:
                 print(f"Route name {route_name} does not match expected prefixes. Skipping agent {i}.")
                 continue
@@ -341,21 +377,44 @@ class TrafficModel(Model):
         
             # Place the agent on the grid
             self.grid.place_agent(agent, start_node)
-
+            
+    def compute_reward(self, agent):
+        """Define the reward structure for agents."""
+        if agent.completed:
+            return 10  # Positive reward for completing a journey
+        return -1  # Negative reward for each step not completed
+    
     def step(self):
         """
         Advance the simulation by one step.
         """
-        print(f"--- Step {self.step_count} ---")
-        self.step_count += 1
-        if self.completed_agents >= self.num_agents:
-            print("All agents have completed their journeys. Stopping simulation.")
-            self.simulation_finished = True  # Mark the simulation as finished
-            return  # Prevent further steps
-        self.schedule.step()  # Let all agents take their actions
+        if self.simulation_finished:
+            return
+        print(f"--- Step {self.step_count} in Episode {self.current_episode} ---")
+        self.schedule.step()
 
-        # Count completed agents
-        print(f"Total completed agents: {self.completed_agents}")
+        # Compute Q-learning updates for agents
+        for agent in self.schedule.agents:
+            if not agent.completed:
+                current_state = agent.get_state()
+                action = agent.last_action
+                next_state = agent.get_state()
+                reward = self.compute_reward(agent)
+
+                # Update Q-values
+                agent.update_q_value(current_state, action, reward, next_state)
+
+        self.step_count += 1
+
+        if self.completed_agents >= self.num_agents:
+            print(f"Episode {self.current_episode} completed.")
+            self.current_episode += 1
+
+            if self.current_episode < self.episodes:
+                self.reset_environment()
+            else:
+                self.simulation_finished = True
+                print("Simulation finished after all episodes.")
 
 class TrafficAgent:
     def __init__(self, unique_id, model, start_node, end_node, route_graph, route_name, normalized_route_edges, speed=10, step_time=10):
@@ -391,6 +450,9 @@ class TrafficAgent:
         self.edge_travelled = 0.0
         self.normalized_route_edges = normalized_route_edges
         
+        # Extract initial transport mode from route name
+        self.last_action = self.get_mode_from_route(route_name)
+        
         # Determine origin and destination 
         if start_node == 4523960189:
             self.origin = "Asprela"
@@ -399,6 +461,66 @@ class TrafficAgent:
             self.origin = "Campo Alegre"
             self.destination = "Asprela"
     
+    def get_state(self):
+        """Define the state of the agent."""
+        return (self.current_node, self.end_node)
+    
+    def get_possible_actions(self):
+        """Define possible actions (mocked for simplicity)."""
+        return ["bike", "car", "public_transport"]
+    
+    def get_mode_from_route(self, route_name):
+        """Extract the mode of transport from the route name."""
+        if "Bike" in route_name:
+            return "bike"
+        elif "Car" in route_name:
+            return "car"
+        elif "PublicTransport" in route_name:
+            return "public_transport"
+        else:
+            raise ValueError(f"Unknown transport mode in route name: {route_name}")
+
+    def select_action(self):
+        """Choose the next transport mode using ε-greedy policy."""
+        state = self.get_state()
+
+        # Ensure the state is initialized in the Q-table
+        if state not in self.model.q_table:
+            self.model.q_table[state] = {a: 0 for a in self.get_possible_actions()}
+
+        # ε-greedy policy: explore or exploit
+        if random.random() < self.model.epsilon:
+            return random.choice(self.get_possible_actions())  # Explore
+        return max(self.model.q_table[state], key=self.model.q_table[state].get)  # Exploit
+
+    
+    def compute_co2_emission(self, action):
+        """Return the CO2 emissions associated with the chosen mode of transport."""
+        emission_factors = {
+            "bike": 0,  # g/km
+            "car": 120,  # g/km (example value)
+            "public_transport": 40,  # g/km (example value)
+        }
+        return emission_factors.get(action, 0)
+
+    def update_q_value(self, state, action, reward, next_state):
+        """Update the Q-value for the taken action."""
+        # Ensure the current state exists in the Q-table
+        if state not in self.model.q_table:
+            self.model.q_table[state] = {a: 0 for a in self.get_possible_actions()}
+
+        # Ensure the action exists for the current state
+        if action not in self.model.q_table[state]:
+            self.model.q_table[state][action] = 0
+
+        # Ensure the next state exists in the Q-table
+        if next_state not in self.model.q_table:
+            self.model.q_table[next_state] = {a: 0 for a in self.get_possible_actions()}
+
+        current_q = self.model.q_table[state][action]
+        max_next_q = max(self.model.q_table[next_state].values(), default=0)
+        self.model.q_table[state][action] = current_q + self.model.alpha * (reward + self.model.gamma * max_next_q - current_q)
+
     def get_assigned_route_edges(self):
         """
         Returns the list of edges (with data) that define the agent's route.
@@ -470,11 +592,23 @@ class TrafficAgent:
         )
 
     def step(self):
-        """
-        Execute one step for the agent.
-        """
-        if self.completed == False:
-            self.move()
+        """Agent takes a step."""
+        if self.completed:
+            return
+
+        # Select an action (transport mode)
+        action = self.select_action()
+        self.last_action = action
+
+        # Compute CO2 emissions for the chosen action
+        co2_emitted = self.compute_co2_emission(action)
+
+        # Reward/Penalty logic based on CO2 emissions
+        reward = -co2_emitted  # Negative reward for higher emissions
+        self.model.q_table[self.get_state()][action] += reward
+
+        # Simulate movement
+        self.move()
 
 # Main execution
 if __name__ == "__main__":
