@@ -134,3 +134,31 @@ def calculate_revenue_growth(baseline_revenue: float, current_revenue: float) ->
 #    baseline_revenue=100000.0,
 #    current_revenue=120000.0)
 #print(f"Growth in revenue from dynamic pricing: {revenue_growth:.2f}%")
+
+def calculate_co2_emissions(agents, co2_factors):
+    """
+    Calculate CO2 emissions for a set of agents based on their route and distance traveled.
+
+    Parameters:
+        agents (list): List of agent objects with route_name and distance_traveled attributes.
+        co2_factors (dict): CO2 emission factors per mode of transportation.
+
+    Returns:
+        dict: A dictionary containing CO2 emissions for each route and total CO2 emissions.
+    """
+    emissions = {
+        "Asprela_2_Campo_Alegre_Bike": 0,
+        "Asprela_2_Campo_Alegre_Car": 0,
+        "Asprela_2_Campo_Alegre_PublicTransport": 0,
+        "Campo_Alegre_2_Asprela_Bike": 0,
+        "Campo_Alegre_2_Asprela_Car": 0,
+        "Campo_Alegre_2_Asprela_PublicTransport": 0,
+    }
+
+    for agent in agents:
+        factor = co2_factors.get(agent.route_name.split('_')[-1], 0)
+        route_key = agent.route_name
+        emissions[route_key] += agent.distance_travelled * factor
+
+    emissions["total"] = sum(emissions.values())
+    return emissions

@@ -6,6 +6,7 @@ import pandas as pd
 import os
 from PIL import Image
 import base64
+import Formulas as f
 
 # Automatically change the working directory to the script's location
 script_dir = os.path.dirname(os.path.abspath(__file__))  # Get the script's directory
@@ -24,6 +25,13 @@ step_time_dimension = 60.0   # s/step aka the "resolution" of the simulation
 
 # Global list to track CO2 emissions over time
 co2_emissions_over_time = []
+
+# Define CO2 emission factors
+co2_factors = {
+    "Bike": 0,  # g/m - According to https://ourworldindata.org/travel-carbon-footprint
+    "Car": 0.17,
+    "PublicTransport": 0.097,
+}
 
 # Initialize the model
 model = TrafficModel(
@@ -91,9 +99,6 @@ html.Div([
 )
 def update_dashboard(n):
     global co2_emissions_over_time  # Access the global variable
-    car_co2_emission_factor = 0.17 # g/m - According to https://ourworldindata.org/travel-carbon-footprint
-    pt_co2_emission_factor = 0.097  # g/m 
-    bike_co2_emission_factor = 0
     
     # Step the model
     if not model.simulation_finished:
@@ -108,14 +113,27 @@ def update_dashboard(n):
         num_agents_c2a_pt = len([agent for agent in model.schedule.agents if agent.route_name == "Campo_Alegre_2_Asprela_PublicTransport"])
 
         # KPIs
-        a2c_pt_co2_emissions = sum(agent.distance_travelled * pt_co2_emission_factor for agent in model.schedule.agents if agent.route_name == "Asprela_2_Campo_Alegre_PublicTransport")
-        a2c_car_co2_emissions = sum(agent.distance_travelled * car_co2_emission_factor for agent in model.schedule.agents if agent.route_name == "Asprela_2_Campo_Alegre_Car")
-        a2c_bike_co2_emissions = sum(agent.distance_travelled * bike_co2_emission_factor for agent in model.schedule.agents if agent.route_name == "Asprela_2_Campo_Alegre_Bike")
-        c2a_car_co2_emissions = sum(agent.distance_travelled * car_co2_emission_factor for agent in model.schedule.agents if agent.route_name == "Campo_Alegre_2_Asprela_Car")
-        c2a_pt_co2_emissions = sum(agent.distance_travelled * pt_co2_emission_factor for agent in model.schedule.agents if agent.route_name == "Campo_Alegre_2_Asprela_PublicTransport")
-        c2a_bike_co2_emissions = sum(agent.distance_travelled * bike_co2_emission_factor for agent in model.schedule.agents if agent.route_name == "Campo_Alegre_2_Asprela_Bike")
-        total_co2_emissions = a2c_pt_co2_emissions + a2c_car_co2_emissions + a2c_bike_co2_emissions + c2a_car_co2_emissions + c2a_pt_co2_emissions + c2a_bike_co2_emissions
+        # a2c_pt_co2_emissions = sum(agent.distance_travelled * pt_co2_emission_factor for agent in model.schedule.agents if agent.route_name == "Asprela_2_Campo_Alegre_PublicTransport")
+        # a2c_car_co2_emissions = sum(agent.distance_travelled * car_co2_emission_factor for agent in model.schedule.agents if agent.route_name == "Asprela_2_Campo_Alegre_Car")
+        # a2c_bike_co2_emissions = sum(agent.distance_travelled * bike_co2_emission_factor for agent in model.schedule.agents if agent.route_name == "Asprela_2_Campo_Alegre_Bike")
+        # c2a_car_co2_emissions = sum(agent.distance_travelled * car_co2_emission_factor for agent in model.schedule.agents if agent.route_name == "Campo_Alegre_2_Asprela_Car")
+        # c2a_pt_co2_emissions = sum(agent.distance_travelled * pt_co2_emission_factor for agent in model.schedule.agents if agent.route_name == "Campo_Alegre_2_Asprela_PublicTransport")
+        # c2a_bike_co2_emissions = sum(agent.distance_travelled * bike_co2_emission_factor for agent in model.schedule.agents if agent.route_name == "Campo_Alegre_2_Asprela_Bike")
+        # total_co2_emissions = a2c_pt_co2_emissions + a2c_car_co2_emissions + a2c_bike_co2_emissions + c2a_car_co2_emissions + c2a_pt_co2_emissions + c2a_bike_co2_emissions
+        
+        # Calculate emissions
+        emission_data = f.calculate_co2_emissions(model.schedule.agents, co2_factors)
+
+        # Access emissions from the returned dictionary
+        a2c_pt_co2_emissions = emission_data["Asprela_2_Campo_Alegre_PublicTransport"]
+        a2c_car_co2_emissions = emission_data["Asprela_2_Campo_Alegre_Car"]
+        a2c_bike_co2_emissions = emission_data["Asprela_2_Campo_Alegre_Bike"]
+        c2a_pt_co2_emissions = emission_data["Campo_Alegre_2_Asprela_PublicTransport"]
+        c2a_car_co2_emissions = emission_data["Campo_Alegre_2_Asprela_Car"]
+        c2a_bike_co2_emissions = emission_data["Campo_Alegre_2_Asprela_Bike"]
+        total_co2_emissions = emission_data["total"]
         completion_rate = f"{model.completed_agents}/{model.num_agents} agents completed"
+        
         # Calculate CO2 emission rate
         if len(co2_emissions_over_time) > 0:
             co2_increase_rate = (total_co2_emissions - co2_emissions_over_time[-1]) / step_time_dimension
