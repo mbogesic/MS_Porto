@@ -91,6 +91,16 @@ class TrafficModel(Model):
         self.node_positions = []
         
         self.episodes = episodes
+        # Define CO2 emission factors
+        self.co2_factors = {
+            "Bike": 0,  # g/m - According to https://ourworldindata.org/travel-carbon-footprint
+            "Car": 0.17,
+            "PublicTransport": 0.097,
+        }
+        self.total_co2_emissions = 0  # Cumulative CO2 emissions across all episodes
+        self.co2_emissions_over_time = []
+        self.co2_emissions_per_episode = []  # CO2 emissions per episode
+        self.current_episode_emissions = 0  # Running total for the current episode
         self.alpha = alpha
         self.gamma = gamma
         self.epsilon = epsilon
@@ -320,7 +330,15 @@ class TrafficModel(Model):
             for node, data in self.combined_subgraph.nodes(data=True)
         }
 
-        # print(f"Combined subgraph loaded with {len(self.combined_subgraph.nodes)} nodes and {len(self.combined_subgraph.edges)} edges.")
+    # print(f"Combined subgraph loaded with {len(self.combined_subgraph.nodes)} nodes and {len(self.combined_subgraph.edges)} edges.")
+    def get_episode_data(self):
+        """Returns the latest data for dashboard updates."""
+        return {
+            "co2_emissions_over_time": self.co2_emissions_over_time,
+            "co2_emissions_per_episode": self.co2_emissions_per_episode,
+            "current_episode": self.current_episode,
+            "total_co2_emissions": self.total_co2_emissions,
+        }   
         
     def add_agents(self):
         """
@@ -393,6 +411,14 @@ class TrafficModel(Model):
         print(f"--- Step {self.step_count} in Episode {self.current_episode} ---")
         self.schedule.step()
 
+         # Calculate CO2 emissions for this step
+        step_emissions = sum(
+            agent.distance_travelled * self.co2_factors[agent.last_action] for agent in self.schedule.agents
+        )
+        self.current_episode_emissions += step_emissions
+        self.total_co2_emissions += step_emissions
+
+        
         # Compute Q-learning updates for agents
         for agent in self.schedule.agents:
             if not agent.completed:
@@ -407,14 +433,20 @@ class TrafficModel(Model):
         self.step_count += 1
 
         if self.completed_agents >= self.num_agents:
-            print(f"Episode {self.current_episode} completed.")
-            self.current_episode += 1
+                    self.co2_emissions_per_episode.append(self.current_episode_emissions)
+                    if len(self.co2_emissions_over_time) == 0:
+                        self.co2_emissions_over_time.append(self.current_episode_emissions)
+                    else:
+                        self.co2_emissions_over_time.append(
+                            self.co2_emissions_over_time[-1] + self.current_episode_emissions
+                        )
+                    self.current_episode_emissions = 0
+                    self.current_episode += 1
 
-            if self.current_episode < self.episodes:
-                self.reset_environment()
-            else:
-                self.simulation_finished = True
-                print("Simulation finished after all episodes.")
+                    if self.current_episode < self.episodes:
+                        self.reset_environment()
+                    else:
+                        self.simulation_finished = True
 
 class TrafficAgent:
     def __init__(self, unique_id, model, start_node, end_node, route_graph, route_name, normalized_route_edges, speed=10, step_time=10):
@@ -467,16 +499,16 @@ class TrafficAgent:
     
     def get_possible_actions(self):
         """Define possible actions (mocked for simplicity)."""
-        return ["bike", "car", "public_transport"]
+        return ["Bike", "Car", "PublicTransport"]
     
     def get_mode_from_route(self, route_name):
         """Extract the mode of transport from the route name."""
         if "Bike" in route_name:
-            return "bike"
+            return "Bike"
         elif "Car" in route_name:
-            return "car"
+            return "Car"
         elif "PublicTransport" in route_name:
-            return "public_transport"
+            return "PublicTransport"
         else:
             raise ValueError(f"Unknown transport mode in route name: {route_name}")
 
@@ -553,7 +585,6 @@ class TrafficAgent:
                 self.distance_travelled = self.route_length  # Cap at total route length
                 self.completed = True
                 self.model.agent_completed(self.unique_id)
-                print(f"Agent {self.unique_id} has completed its journey.")
             return
 
         # Ensure the agent moves along valid edges
@@ -618,12 +649,14 @@ if __name__ == "__main__":
     combined_edges_file = os.path.join(nodes_and_edges_folder, "all_routes_combined_edges.csv")
     num_agents = 1
     step_time_dimension = 1.0   # s/step aka the "resolution" of the simulation
+    episodes = 30
 
     # Initialize the model
     model = TrafficModel(
         nodes_and_edges_folder,
         num_agents, 
         step_time_dimension, 
+        episodes,
         combined_nodes_file=combined_nodes_file,
         combined_edges_file=combined_edges_file
     )
@@ -635,7 +668,14 @@ if __name__ == "__main__":
         
     # Run the simulation until every agent has finished his travel
     step_count = 0
+    episode_count = 0
+    
     while not model.simulation_finished:
         print(f"--- Step {step_count} ---")
         model.step()
         step_count += 1
+        if episode_count != model.current_episode:
+            episode_count = model.current_episode
+            print(f"--- Episode {episode_count} completed ---")
+            step_count = 0
+        
