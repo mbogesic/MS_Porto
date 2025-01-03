@@ -98,6 +98,9 @@ class TrafficModel(Model):
             "Car": 0.17,
             "PublicTransport": 0.097,
         }
+        self.mode_distributions = []
+
+
         self.total_co2_emissions = 0  # Cumulative CO2 emissions across all episodes
         self.co2_emissions_over_time = []
         self.co2_emissions_per_episode = []  # CO2 emissions per episode
@@ -121,13 +124,33 @@ class TrafficModel(Model):
 
     def reset_environment(self):
         """Reset the simulation environment while retaining Q-table."""
-
+        
         self.completed_agents = 0
         self.simulation_finished = False
         self.step_count = 0
-
+        
+        # Count mode distribution at the start of the episode
+        start_distribution = {"Bike": 0, "PublicTransport": 0, "Car": 0}
+        
         for agent in self.agents:
-                agent.reset_for_new_episode()
+            start_distribution[agent.last_action] += 1
+
+        # Store the start distribution for analysis
+        self.mode_distributions.append(start_distribution)
+        print(f"Mode Distribution at the Start of Episode {self.current_episode}: {start_distribution}")
+
+        # Reset agents for the new episode
+        for agent in self.agents:
+            # Compute Q-learning updates for agents
+            current_state = agent.get_state()
+            action = agent.last_action
+            next_state = agent.get_state()
+            reward = self.compute_reward(agent)
+
+            # Update Q-values
+            agent.update_q_value(current_state, action, reward, next_state)
+            
+            agent.reset_for_new_episode()
         
         # # After loading routes
         # print(f"Main graph has {len(self.graph.nodes)} nodes and {len(self.graph.edges)} edges.")
@@ -147,7 +170,7 @@ class TrafficModel(Model):
         Notify the model that an agent has completed its route.
         This ensures the model's completed_agents counter is updated accurately.
         """
-        print(f"Agent {agent_id} has completed its journey.")
+        # print(f"Agent {agent_id} has completed its journey.")
         self.completed_agents += 1
 
     def get_ordered_edges(self, graph, start_node, end_node):
@@ -400,11 +423,46 @@ class TrafficModel(Model):
             self.grid.place_agent(agent, start_node)
             
     def compute_reward(self, agent):
-        """Define the reward structure for agents."""
-        if agent.completed:
-            return 10  # Positive reward for completing a journey
-        return -1  # Negative reward for each step not completed
-    
+        if agent.last_action == "Bike":
+            # print(f"Agent {agent.unique_id}: Reward for Bike = 10")
+            return 1  # Highest reward
+        elif agent.last_action == "PublicTransport":
+            # print(f"Agent {agent.unique_id}: Reward for PublicTransport = 5")
+            return 0  # Medium reward
+        elif agent.last_action == "Car":
+            # print(f"Agent {agent.unique_id}: Penalty for Car = -10")
+            return -1  # Penalty
+        else:
+            return 0
+
+        
+    def update_route_based_on_mode_and_direction(self, agent, selected_mode):
+        """
+        Update the route and graph based on the selected transport mode and direction (CA -> A or A -> CA).
+        
+        Parameters:
+            agent: The traffic agent to update.
+            selected_mode: The selected mode of transport (e.g., "Bike", "Car", "PublicTransport").
+        """
+        # Define a map for modes and routes, considering both directions
+        route_map = {
+            ("Asprela", "Campo Alegre", "Bike"): "Asprela_2_Campo_Alegre_Bike",
+            ("Asprela", "Campo Alegre", "PublicTransport"): "Asprela_2_Campo_Alegre_PublicTransport",
+            ("Asprela", "Campo Alegre", "Car"): "Asprela_2_Campo_Alegre_Car",
+            ("Campo Alegre", "Asprela", "Bike"): "Campo_Alegre_2_Asprela_Bike",
+            ("Campo Alegre", "Asprela", "PublicTransport"): "Campo_Alegre_2_Asprela_PublicTransport",
+            ("Campo Alegre", "Asprela", "Car"): "Campo_Alegre_2_Asprela_Car",
+        }
+
+        # Determine the route based on the agent's origin, destination, and mode
+        route_key = (agent.origin, agent.destination, selected_mode)
+        if route_key not in route_map:
+            raise ValueError(f"Invalid route or mode: {route_key}")
+
+        # Update the agent's route and graph
+        agent.route_name = route_map[route_key]
+        agent.route_graph = self.routes[self.route_names.index(agent.route_name)]
+        
     def step(self):
         """
         Advance the simulation by one step.
@@ -412,7 +470,7 @@ class TrafficModel(Model):
         if self.simulation_finished:
             return
         
-        print(f"--- Step {self.step_count} in Episode {self.current_episode} ---")
+        # print(f"--- Step {self.step_count} in Episode {self.current_episode} ---")
         self.schedule.step()
 
          # Calculate CO2 emissions for this step
@@ -421,19 +479,7 @@ class TrafficModel(Model):
         )
         self.current_episode_emissions += step_emissions
         self.total_co2_emissions += step_emissions
-
-        
-        # Compute Q-learning updates for agents
-        for agent in self.schedule.agents:
-            if not agent.completed:
-                current_state = agent.get_state()
-                action = agent.last_action
-                next_state = agent.get_state()
-                reward = self.compute_reward(agent)
-
-                # Update Q-values
-                agent.update_q_value(current_state, action, reward, next_state)
-
+ 
         self.step_count += 1
 
         if self.completed_agents >= self.num_agents:
@@ -471,6 +517,7 @@ class TrafficAgent:
         self.unique_id = unique_id
         self.model = model
         self.current_node = start_node
+        self.start = start_node
         self.pos = start_node  # Add the position attribute for MESA's NetworkGrid
         self.end_node = end_node
         self.route_graph = route_graph
@@ -530,7 +577,6 @@ class TrafficAgent:
         if random.random() < self.model.epsilon:
             return random.choice(self.get_possible_actions())  # Explore
         return max(self.model.q_table[state], key=self.model.q_table[state].get)  # Exploit
-
     
     def compute_co2_emission(self, action):
         """Return the CO2 emissions associated with the chosen mode of transport."""
@@ -629,27 +675,30 @@ class TrafficAgent:
         # )
 
     def step(self):
-        """Agent takes a step."""
         if self.completed:
             return
 
         # Select an action (transport mode)
-        action = self.select_action()
-        self.last_action = action
+        selected_mode = self.select_action()
+
+        # Update route and mode based on selection
+        self.model.update_route_based_on_mode_and_direction(self, selected_mode)
+        self.last_action = selected_mode
 
         # Compute CO2 emissions for the chosen action
-        co2_emitted = self.compute_co2_emission(action)
+        co2_emitted = self.compute_co2_emission(selected_mode)
 
         # Reward/Penalty logic based on CO2 emissions
         reward = -co2_emitted  # Negative reward for higher emissions
-        self.model.q_table[self.get_state()][action] += reward
+        self.model.q_table[self.get_state()][selected_mode] += reward
 
         # Simulate movement
         self.move()
+
         
     def reset_for_new_episode(self):
         """Reset episode-specific attributes while retaining persistent data."""
-        self.current_node = self.pos  # Reset to start position
+        self.current_node = self.start  # Reset to start position
         self.distance_travelled = 0.0
         self.elapsed_time = 0.0
         self.completed = False
@@ -665,9 +714,9 @@ if __name__ == "__main__":
     nodes_and_edges_folder = "nodes_and_edges"
     combined_nodes_file = os.path.join(nodes_and_edges_folder, "all_routes_combined_nodes.csv")
     combined_edges_file = os.path.join(nodes_and_edges_folder, "all_routes_combined_edges.csv")
-    num_agents = 1
-    step_time_dimension = 1.0   # s/step aka the "resolution" of the simulation
-    episodes = 30
+    num_agents = 1000
+    step_time_dimension = 60.0   # s/step aka the "resolution" of the simulation
+    episodes = 10
 
     # Initialize the model
     model = TrafficModel(
@@ -689,7 +738,6 @@ if __name__ == "__main__":
     episode_count = 0
     
     while not model.simulation_finished:
-        print(f"--- Step {step_count} ---")
         model.step()
         step_count += 1
         if episode_count != model.current_episode:

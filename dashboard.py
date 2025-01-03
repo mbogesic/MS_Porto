@@ -19,7 +19,7 @@ combined_nodes_file = os.path.join(nodes_and_edges_folder, "all_routes_combined_
 combined_edges_file = os.path.join(nodes_and_edges_folder, "all_routes_combined_edges.csv")
 num_agents = 1000
 step_time_dimension = 60.0   # s/step aka the "resolution" of the simulation
-episodes = 30
+episodes = 100
 
 # Global list to track CO2 emissions over time
 co2_emissions_over_time = []  # Running total of CO2 emissions
