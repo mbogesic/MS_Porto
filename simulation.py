@@ -81,7 +81,7 @@ class TrafficModel(Model):
         self.schedule = RandomActivation(self)
         self.nodes_and_edges_folder = nodes_and_edges_folder
         self.num_agents = num_agents
-        self.agents = set()
+        self.custom_agents = set()
         self.routes = []  # List of routes (subgraphs)
         self.route_names = []  # List of route names
         self.route_lengths = extract_route_lengths(nodes_and_edges_folder)  # Extract lengths here
@@ -133,7 +133,7 @@ class TrafficModel(Model):
         # Count mode distribution at the start of the episode
         start_distribution = {"Bike": 0, "PublicTransport": 0, "Car": 0}
         
-        for agent in self.agents:
+        for agent in self.custom_agents:
             start_distribution[agent.last_action] += 1
 
         # Store the start distribution for analysis
@@ -142,7 +142,7 @@ class TrafficModel(Model):
         print(f"Mode Distribution: {start_distribution}")
 
         # Reset agents for the new episode
-        for agent in self.agents:
+        for agent in self.custom_agents:
             # Compute Q-learning updates for agents
             current_state = agent.get_state()
             action = agent.last_action
@@ -423,7 +423,7 @@ class TrafficModel(Model):
                 step_time=self.step_time,
             )
             self.schedule.add(agent)
-            self.agents.add(agent)
+            self.custom_agents.add(agent)
             # Place the agent on the grid
             self.grid.place_agent(agent, start_node)
             
@@ -746,6 +746,5 @@ if __name__ == "__main__":
         step_count += 1
         if episode_count != model.current_episode:
             episode_count = model.current_episode
-            print(f"--- Episode {episode_count} completed ---")
             step_count = 0
         

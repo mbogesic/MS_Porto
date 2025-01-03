@@ -17,23 +17,13 @@ from simulation import TrafficModel
 nodes_and_edges_folder = "nodes_and_edges"
 combined_nodes_file = os.path.join(nodes_and_edges_folder, "all_routes_combined_nodes.csv")
 combined_edges_file = os.path.join(nodes_and_edges_folder, "all_routes_combined_edges.csv")
-num_agents = 10
+num_agents = 1000
 step_time_dimension = 60.0   # s/step aka the "resolution" of the simulation
 episodes = 30
 
 # # Global list to track CO2 emissions over time
 # co2_emissions_over_time = []  # Running total of CO2 emissions
 # co2_emissions_over_episodes = []  # Total CO2 emissions per episode
-
-# Initialize the model
-model = TrafficModel(
-        nodes_and_edges_folder,
-        num_agents,  
-        step_time_dimension, 
-        episodes,
-        combined_nodes_file=combined_nodes_file,
-        combined_edges_file=combined_edges_file
-    )
 
 # Start the Dash App
 app = dash.Dash(__name__)
@@ -55,54 +45,63 @@ app.layout = html.Div([
     [Input("interval-component", "n_intervals")]
 )
 def update_plots(n_intervals):
-    if model.simulation_finished or model.current_episode > 0:
-        data = model.get_episode_data()
+    # Retrieve simulation data for plots
+    data = model.get_episode_data()
 
-        # Align x-axis with actual episode indices (start from 0)
-        episode_numbers = list(range(model.current_episode + 1))  # Include current episode
+    # Prepare episode indices
+    episode_numbers = list(range(len(data["co2_emissions_per_episode"])))
 
-        # Generate cumulative plot
-        cumulative_plot = go.Figure(
-            data=[
-                go.Scatter(
-                    x=episode_numbers,
-                    y=data["co2_emissions_over_time"][: len(episode_numbers)],
-                    mode="lines+markers",
-                    name="Cumulative CO2 Emissions",
-                )
-            ],
-            layout=go.Layout(
-                title="Cumulative CO2 Emissions Over Episodes",
-                xaxis=dict(title="Episodes"),
-                yaxis=dict(title="CO2 Emissions (g)"),
-            ),
-        )
+    # Create the plots
+    cumulative_plot = go.Figure(
+        data=[
+            go.Scatter(
+                x=episode_numbers,
+                y=data["co2_emissions_over_time"],
+                mode="lines+markers",
+                name="Cumulative CO2 Emissions",
+            )
+        ],
+        layout=go.Layout(
+            title="Cumulative CO2 Emissions Over Episodes",
+            xaxis=dict(title="Episodes"),
+            yaxis=dict(title="CO2 Emissions (g)"),
+        ),
+    )
 
-        # Generate episode-wise CO2 plot
-        episode_plot = go.Figure(
-            data=[
-                go.Bar(
-                    x=episode_numbers,
-                    y=data["co2_emissions_per_episode"][: len(episode_numbers)],
-                    name="CO2 Emissions Per Episode",
-                )
-            ],
-            layout=go.Layout(
-                title="CO2 Emissions Per Episode",
-                xaxis=dict(title="Episodes"),
-                yaxis=dict(title="CO2 Emissions (g)"),
-            ),
-        )
+    episode_plot = go.Figure(
+        data=[
+            go.Bar(
+                x=episode_numbers,
+                y=data["co2_emissions_per_episode"],
+                name="CO2 Emissions Per Episode",
+            )
+        ],
+        layout=go.Layout(
+            title="CO2 Emissions Per Episode",
+            xaxis=dict(title="Episodes"),
+            yaxis=dict(title="CO2 Emissions (g)"),
+        ),
+    )
 
-        return cumulative_plot, episode_plot
+    return cumulative_plot, episode_plot
 
-    raise dash.exceptions.PreventUpdate
 
 if __name__ == "__main__":
+    # Initialize the model
+    model = TrafficModel(
+        nodes_and_edges_folder,
+        num_agents,  
+        step_time_dimension, 
+        episodes,
+        combined_nodes_file=combined_nodes_file,
+        combined_edges_file=combined_edges_file
+    )
+    
     while not model.simulation_finished:
         model.step()
-    app.run_server(debug=True)
+    app.run_server(debug=False)
     
+
     
     ####################################################################
     ## TO BE INTEGRATED AFTER CREDIT SCHEME AND Q-LEARNING IS WORKING ##
