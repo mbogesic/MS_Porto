@@ -621,12 +621,12 @@ class TrafficAgent:
         progress_percentage = round((self.distance_travelled / self.route_length) * 100, 2)
         remaining_nodes_count = self.get_remaining_nodes_count()
         
-        # Debugging output
-        print(
-            f"Agent {self.unique_id} moving from {self.origin} to {self.destination}. Travel-Mode: {self.route_name.split('_')[-1]}. "
-            f"Distance travelled: {self.distance_travelled:.2f} meters ({progress_percentage:.2f}% completed). "
-            f"Elapsed time: {self.elapsed_time:.2f} seconds. Nodes left: {remaining_nodes_count-1}."
-        )
+        # # Debugging output
+        # print(
+        #     f"Agent {self.unique_id} moving from {self.origin} to {self.destination}. Travel-Mode: {self.route_name.split('_')[-1]}. "
+        #     f"Distance travelled: {self.distance_travelled:.2f} meters ({progress_percentage:.2f}% completed). "
+        #     f"Elapsed time: {self.elapsed_time:.2f} seconds. Nodes left: {remaining_nodes_count-1}."
+        # )
 
     def step(self):
         """Agent takes a step."""

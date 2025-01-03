@@ -2,10 +2,7 @@ import dash
 from dash import dcc, html
 from dash.dependencies import Input, Output, State
 import plotly.graph_objects as go
-import pandas as pd
 import os
-from PIL import Image
-import base64
 import Formulas as f
 
 # Automatically change the working directory to the script's location
@@ -20,9 +17,9 @@ from simulation import TrafficModel
 nodes_and_edges_folder = "nodes_and_edges"
 combined_nodes_file = os.path.join(nodes_and_edges_folder, "all_routes_combined_nodes.csv")
 combined_edges_file = os.path.join(nodes_and_edges_folder, "all_routes_combined_edges.csv")
-num_agents = 500
+num_agents = 1000
 step_time_dimension = 60.0   # s/step aka the "resolution" of the simulation
-episodes = 100
+episodes = 30
 
 # Global list to track CO2 emissions over time
 co2_emissions_over_time = []  # Running total of CO2 emissions
