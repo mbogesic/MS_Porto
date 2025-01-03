@@ -78,9 +78,10 @@ class TrafficModel(Model):
         
         # Load the combined subgraph
         # self.load_combined_subgraph(combined_nodes_file, combined_edges_file)
-
+        self.schedule = RandomActivation(self)
         self.nodes_and_edges_folder = nodes_and_edges_folder
         self.num_agents = num_agents
+        self.agents = set()
         self.routes = []  # List of routes (subgraphs)
         self.route_names = []  # List of route names
         self.route_lengths = extract_route_lengths(nodes_and_edges_folder)  # Extract lengths here
@@ -113,18 +114,20 @@ class TrafficModel(Model):
         # Load routes and agents
         self.load_routes()
         self.validate_routes()
+        self.add_agents()
         
         # Initialize environment and agents
         self.reset_environment()
 
     def reset_environment(self):
         """Reset the simulation environment while retaining Q-table."""
-        self.schedule = RandomActivation(self)
+
         self.completed_agents = 0
         self.simulation_finished = False
         self.step_count = 0
 
-        self.add_agents()
+        for agent in self.agents:
+                agent.reset_for_new_episode()
         
         # # After loading routes
         # print(f"Main graph has {len(self.graph.nodes)} nodes and {len(self.graph.edges)} edges.")
@@ -392,7 +395,7 @@ class TrafficModel(Model):
                 step_time=self.step_time,
             )
             self.schedule.add(agent)
-        
+            self.agents.add(agent)
             # Place the agent on the grid
             self.grid.place_agent(agent, start_node)
             
@@ -408,6 +411,7 @@ class TrafficModel(Model):
         """
         if self.simulation_finished:
             return
+        
         print(f"--- Step {self.step_count} in Episode {self.current_episode} ---")
         self.schedule.step()
 
@@ -433,20 +437,22 @@ class TrafficModel(Model):
         self.step_count += 1
 
         if self.completed_agents >= self.num_agents:
-                    self.co2_emissions_per_episode.append(self.current_episode_emissions)
-                    if len(self.co2_emissions_over_time) == 0:
-                        self.co2_emissions_over_time.append(self.current_episode_emissions)
-                    else:
-                        self.co2_emissions_over_time.append(
-                            self.co2_emissions_over_time[-1] + self.current_episode_emissions
-                        )
-                    self.current_episode_emissions = 0
-                    self.current_episode += 1
+            self.co2_emissions_per_episode.append(self.current_episode_emissions)
+            
+            if len(self.co2_emissions_over_time) == 0:
+                self.co2_emissions_over_time.append(self.current_episode_emissions)
+            else:
+                self.co2_emissions_over_time.append(
+                    self.co2_emissions_over_time[-1] + self.current_episode_emissions
+                )
+                
+            self.current_episode_emissions = 0
+            self.current_episode += 1
 
-                    if self.current_episode < self.episodes:
-                        self.reset_environment()
-                    else:
-                        self.simulation_finished = True
+            if self.current_episode < self.episodes:
+                self.reset_environment()
+            else:
+                self.simulation_finished = True
 
 class TrafficAgent:
     def __init__(self, unique_id, model, start_node, end_node, route_graph, route_name, normalized_route_edges, speed=10, step_time=10):
@@ -640,6 +646,18 @@ class TrafficAgent:
 
         # Simulate movement
         self.move()
+        
+    def reset_for_new_episode(self):
+        """Reset episode-specific attributes while retaining persistent data."""
+        self.current_node = self.pos  # Reset to start position
+        self.distance_travelled = 0.0
+        self.elapsed_time = 0.0
+        self.completed = False
+        self.step_cnt = 0
+        self.edge_travelled = 0.0
+        self.current_edge_index = 0
+        self.counted = False
+        # Other episode-specific attributes can be reset here
 
 # Main execution
 if __name__ == "__main__":
