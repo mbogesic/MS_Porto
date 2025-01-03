@@ -17,7 +17,7 @@ from simulation import TrafficModel
 nodes_and_edges_folder = "nodes_and_edges"
 combined_nodes_file = os.path.join(nodes_and_edges_folder, "all_routes_combined_nodes.csv")
 combined_edges_file = os.path.join(nodes_and_edges_folder, "all_routes_combined_edges.csv")
-num_agents = 1000
+num_agents = 10
 step_time_dimension = 60.0   # s/step aka the "resolution" of the simulation
 episodes = 30
 
@@ -50,26 +50,23 @@ app.layout = html.Div([
     ),
 ])
 
-
 @app.callback(
-    [
-        Output("metric-plot", "figure"),
-        Output("episode-plot", "figure"),
-    ],
+    [Output("metric-plot", "figure"), Output("episode-plot", "figure")],
     [Input("interval-component", "n_intervals")]
 )
 def update_plots(n_intervals):
-    # Check if the simulation is finished or a new episode is completed
     if model.simulation_finished or model.current_episode > 0:
-        # Fetch latest data
         data = model.get_episode_data()
-        # print(f"CO2 Emissions Per Episode: {data['co2_emissions_per_episode']}")
+
+        # Align x-axis with actual episode indices (start from 0)
+        episode_numbers = list(range(model.current_episode + 1))  # Include current episode
+
         # Generate cumulative plot
         cumulative_plot = go.Figure(
             data=[
                 go.Scatter(
-                    x=list(range(1, len(data["co2_emissions_over_time"]) + 1)),
-                    y=data["co2_emissions_over_time"],
+                    x=episode_numbers,
+                    y=data["co2_emissions_over_time"][: len(episode_numbers)],
                     mode="lines+markers",
                     name="Cumulative CO2 Emissions",
                 )
@@ -85,8 +82,8 @@ def update_plots(n_intervals):
         episode_plot = go.Figure(
             data=[
                 go.Bar(
-                    x=list(range(1, len(data["co2_emissions_per_episode"]) + 1)),
-                    y=data["co2_emissions_per_episode"],
+                    x=episode_numbers,
+                    y=data["co2_emissions_per_episode"][: len(episode_numbers)],
                     name="CO2 Emissions Per Episode",
                 )
             ],
@@ -97,15 +94,10 @@ def update_plots(n_intervals):
             ),
         )
 
-        # Reset the flag to avoid redundant updates
-        model.current_episode = 0
-
         return cumulative_plot, episode_plot
 
-    # Prevent updates if no new data
     raise dash.exceptions.PreventUpdate
 
-    
 if __name__ == "__main__":
     while not model.simulation_finished:
         model.step()

@@ -138,7 +138,8 @@ class TrafficModel(Model):
 
         # Store the start distribution for analysis
         self.mode_distributions.append(start_distribution)
-        print(f"Mode Distribution at the Start of Episode {self.current_episode}: {start_distribution}")
+        print(f"+++ Episode {self.current_episode} Started +++")
+        print(f"Mode Distribution: {start_distribution}")
 
         # Reset agents for the new episode
         for agent in self.agents:
@@ -490,24 +491,28 @@ class TrafficModel(Model):
  
         self.step_count += 1
 
-        # Check if all agents are complete
         if self.completed_agents >= self.num_agents:
-            self.co2_emissions_per_episode.append(self.current_episode_emissions)
+            # Ensure emissions are appended only once per episode
+            if len(self.co2_emissions_per_episode) <= self.current_episode:
+                self.co2_emissions_per_episode.append(self.current_episode_emissions)
 
+            print(f"--- Episode {self.current_episode} Completed ---")
+            print(f"CO2 Emissions This Episode: {self.current_episode_emissions}")
+            
             # Recalculate cumulative emissions
             self.co2_emissions_over_time = [
                 sum(self.co2_emissions_per_episode[:i+1])
                 for i in range(len(self.co2_emissions_per_episode))
-]
+            ]
 
             # Reset for the next episode
             self.current_episode_emissions = 0
-            self.current_episode += 1
-
-            if self.current_episode < self.episodes:
+            if self.current_episode < self.episodes - 1:
+                self.current_episode += 1
                 self.reset_environment()
-            else:
+            elif self.current_episode == self.episodes - 1:
                 self.simulation_finished = True
+
 
 class TrafficAgent:
     def __init__(self, unique_id, model, start_node, end_node, route_graph, route_name, normalized_route_edges, speed=10, step_time=10):
