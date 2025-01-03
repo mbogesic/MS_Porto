@@ -19,11 +19,11 @@ combined_nodes_file = os.path.join(nodes_and_edges_folder, "all_routes_combined_
 combined_edges_file = os.path.join(nodes_and_edges_folder, "all_routes_combined_edges.csv")
 num_agents = 1000
 step_time_dimension = 60.0   # s/step aka the "resolution" of the simulation
-episodes = 100
+episodes = 30
 
-# Global list to track CO2 emissions over time
-co2_emissions_over_time = []  # Running total of CO2 emissions
-co2_emissions_over_episodes = []  # Total CO2 emissions per episode
+# # Global list to track CO2 emissions over time
+# co2_emissions_over_time = []  # Running total of CO2 emissions
+# co2_emissions_over_episodes = []  # Total CO2 emissions per episode
 
 # Initialize the model
 model = TrafficModel(
@@ -63,7 +63,7 @@ def update_plots(n_intervals):
     if model.simulation_finished or model.current_episode > 0:
         # Fetch latest data
         data = model.get_episode_data()
-
+        # print(f"CO2 Emissions Per Episode: {data['co2_emissions_per_episode']}")
         # Generate cumulative plot
         cumulative_plot = go.Figure(
             data=[

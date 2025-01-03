@@ -128,6 +128,7 @@ class TrafficModel(Model):
         self.completed_agents = 0
         self.simulation_finished = False
         self.step_count = 0
+        self.current_episode_emissions = 0
         
         # Count mode distribution at the start of the episode
         start_distribution = {"Bike": 0, "PublicTransport": 0, "Car": 0}
@@ -171,6 +172,9 @@ class TrafficModel(Model):
         This ensures the model's completed_agents counter is updated accurately.
         """
         # print(f"Agent {agent_id} has completed its journey.")
+        agent = next(a for a in self.schedule.agents if a.unique_id == agent_id)
+        agent.completed = True
+        # Set agent's last_action to a no-emission mode (e.g., "None")
         self.completed_agents += 1
 
     def get_ordered_edges(self, graph, start_node, end_node):
@@ -423,19 +427,18 @@ class TrafficModel(Model):
             self.grid.place_agent(agent, start_node)
             
     def compute_reward(self, agent):
+        """
+        Compute the reward for the agent based on its current mode of transport.
+        """
         if agent.last_action == "Bike":
-            # print(f"Agent {agent.unique_id}: Reward for Bike = 10")
-            return 1  # Highest reward
+            return 1  # Highest reward for biking
         elif agent.last_action == "PublicTransport":
-            # print(f"Agent {agent.unique_id}: Reward for PublicTransport = 5")
-            return 0  # Medium reward
+            return 0.5  # Medium reward for public transport
         elif agent.last_action == "Car":
-            # print(f"Agent {agent.unique_id}: Penalty for Car = -10")
-            return -1  # Penalty
+            return -1  # Penalty for car use
         else:
-            return 0
+            return 0  # Default reward for unknown modes
 
-        
     def update_route_based_on_mode_and_direction(self, agent, selected_mode):
         """
         Update the route and graph based on the selected transport mode and direction (CA -> A or A -> CA).
@@ -475,23 +478,29 @@ class TrafficModel(Model):
 
          # Calculate CO2 emissions for this step
         step_emissions = sum(
-            agent.distance_travelled * self.co2_factors[agent.last_action] for agent in self.schedule.agents
+            agent.distance_travelled * self.co2_factors[agent.last_action]
+            for agent in self.schedule.agents if not agent.completed
         )
+        # print(f"Episode {self.current_episode}, Step {self.step_count}, Step Emissions: {step_emissions}")
+        # print(f"Agent States: {[agent.last_action for agent in self.schedule.agents]}")
+        # print(f"Agent Distances: {[agent.distance_travelled for agent in self.schedule.agents]}")
+
         self.current_episode_emissions += step_emissions
         self.total_co2_emissions += step_emissions
  
         self.step_count += 1
 
+        # Check if all agents are complete
         if self.completed_agents >= self.num_agents:
             self.co2_emissions_per_episode.append(self.current_episode_emissions)
-            
-            if len(self.co2_emissions_over_time) == 0:
-                self.co2_emissions_over_time.append(self.current_episode_emissions)
-            else:
-                self.co2_emissions_over_time.append(
-                    self.co2_emissions_over_time[-1] + self.current_episode_emissions
-                )
-                
+
+            # Recalculate cumulative emissions
+            self.co2_emissions_over_time = [
+                sum(self.co2_emissions_per_episode[:i+1])
+                for i in range(len(self.co2_emissions_per_episode))
+]
+
+            # Reset for the next episode
             self.current_episode_emissions = 0
             self.current_episode += 1
 
@@ -547,8 +556,11 @@ class TrafficAgent:
             self.destination = "Asprela"
     
     def get_state(self):
-        """Define the state of the agent."""
-        return (self.current_node, self.end_node)
+        """
+        Define the state of the agent based solely on the last chosen mode of transport.
+        """
+        return self.last_action
+
     
     def get_possible_actions(self):
         """Define possible actions (mocked for simplicity)."""
@@ -577,33 +589,24 @@ class TrafficAgent:
         if random.random() < self.model.epsilon:
             return random.choice(self.get_possible_actions())  # Explore
         return max(self.model.q_table[state], key=self.model.q_table[state].get)  # Exploit
-    
-    def compute_co2_emission(self, action):
-        """Return the CO2 emissions associated with the chosen mode of transport."""
-        emission_factors = {
-            "bike": 0,  # g/km
-            "car": 120,  # g/km (example value)
-            "public_transport": 40,  # g/km (example value)
-        }
-        return emission_factors.get(action, 0)
 
     def update_q_value(self, state, action, reward, next_state):
-        """Update the Q-value for the taken action."""
-        # Ensure the current state exists in the Q-table
+        """
+        Update the Q-value for the chosen mode of transport.
+        """
+        # Ensure the current state is initialized in the Q-table
         if state not in self.model.q_table:
             self.model.q_table[state] = {a: 0 for a in self.get_possible_actions()}
 
-        # Ensure the action exists for the current state
-        if action not in self.model.q_table[state]:
-            self.model.q_table[state][action] = 0
-
-        # Ensure the next state exists in the Q-table
+        # Ensure the next state is initialized in the Q-table
         if next_state not in self.model.q_table:
             self.model.q_table[next_state] = {a: 0 for a in self.get_possible_actions()}
 
+        # Q-learning update rule
         current_q = self.model.q_table[state][action]
         max_next_q = max(self.model.q_table[next_state].values(), default=0)
         self.model.q_table[state][action] = current_q + self.model.alpha * (reward + self.model.gamma * max_next_q - current_q)
+
 
     def get_assigned_route_edges(self):
         """
@@ -675,26 +678,19 @@ class TrafficAgent:
         # )
 
     def step(self):
+        """
+        Execute a step in the agent's decision-making process.
+        """
         if self.completed:
             return
 
-        # Select an action (transport mode)
-        selected_mode = self.select_action()
+        # Update Q-value for the chosen action
+        current_state = self.get_state()
+        reward = self.model.compute_reward(self)  # Compute reward for the current mode
+        self.update_q_value(current_state, self.last_action, reward, self.last_action)  # Next state is the same as selected mode
 
-        # Update route and mode based on selection
-        self.model.update_route_based_on_mode_and_direction(self, selected_mode)
-        self.last_action = selected_mode
-
-        # Compute CO2 emissions for the chosen action
-        co2_emitted = self.compute_co2_emission(selected_mode)
-
-        # Reward/Penalty logic based on CO2 emissions
-        reward = -co2_emitted  # Negative reward for higher emissions
-        self.model.q_table[self.get_state()][selected_mode] += reward
-
-        # Simulate movement
+        # Simulate movement and completion logic
         self.move()
-
         
     def reset_for_new_episode(self):
         """Reset episode-specific attributes while retaining persistent data."""
@@ -706,7 +702,10 @@ class TrafficAgent:
         self.edge_travelled = 0.0
         self.current_edge_index = 0
         self.counted = False
-        # Other episode-specific attributes can be reset here
+
+        # Select transport mode for the new episode
+        self.last_action = self.select_action()
+
 
 # Main execution
 if __name__ == "__main__":
@@ -714,7 +713,7 @@ if __name__ == "__main__":
     nodes_and_edges_folder = "nodes_and_edges"
     combined_nodes_file = os.path.join(nodes_and_edges_folder, "all_routes_combined_nodes.csv")
     combined_edges_file = os.path.join(nodes_and_edges_folder, "all_routes_combined_edges.csv")
-    num_agents = 1000
+    num_agents = 10
     step_time_dimension = 60.0   # s/step aka the "resolution" of the simulation
     episodes = 10
 
