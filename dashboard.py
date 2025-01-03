@@ -33,6 +33,7 @@ app.layout = html.Div([
     html.H1("AMC Simulation Dashboard"),
     dcc.Graph(id="metric-plot", style={"width": "100%", "height": "400px"}),
     dcc.Graph(id="episode-plot", style={"width": "100%", "height": "400px"}),
+    dcc.Graph(id="credits-plot", style={"width": "100%", "height": "400px"}),  # New graph for credits
     dcc.Interval(
         id="interval-component",
         interval=1000,  # 1000ms = 1 second
@@ -41,7 +42,9 @@ app.layout = html.Div([
 ])
 
 @app.callback(
-    [Output("metric-plot", "figure"), Output("episode-plot", "figure")],
+    [Output("metric-plot", "figure"), 
+    Output("episode-plot", "figure"), 
+    Output("credits-plot", "figure")],  # Include the credits plot
     [Input("interval-component", "n_intervals")]
 )
 def update_plots(n_intervals):
@@ -83,8 +86,49 @@ def update_plots(n_intervals):
         ),
     )
 
-    return cumulative_plot, episode_plot
+    #CREDITS SCHEME
+    #agent_credits = model.get_agent_credits()
+    #agent_ids = list(agent_credits.keys())
+    #credits = list(agent_credits.values())
+    #print(f"Agent Credits at Interval {n_intervals}: ")
+    #for agent_id, credit in agent_credits.items():
+    #    print(f"Agent {agent_id}: {credit} credits")
 
+    #plots
+    if model.simulation_finished:
+        # Fetch agent credits at the end of the simulation
+        agent_credits = model.get_agent_credits()
+        agent_ids = list(agent_credits.keys())
+        credits = list(agent_credits.values())
+
+        # Create a plot for agent credits
+        credits_plot = go.Figure(
+            data=[go.Bar(
+                x=agent_ids,
+                y=credits,
+                name="Agent Credits"
+            )],
+            layout=go.Layout(
+                title="Agent Credits",
+                xaxis=dict(title="Agent IDs"),
+                yaxis=dict(title="Credits")
+            )
+        )
+    else:
+        # Show a placeholder plot if the simulation is not finished
+        credits_plot = go.Figure(
+            data=[go.Bar(
+                x=[],
+                y=[],
+                name="Agent Credits"
+            )],
+            layout=go.Layout(
+                title="Agent Credits",
+                xaxis=dict(title="Agent IDs"),
+                yaxis=dict(title="Credits")
+            )
+        )
+    return cumulative_plot, episode_plot, credits_plot
 
 if __name__ == "__main__":
     # Initialize the model

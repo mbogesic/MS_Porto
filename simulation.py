@@ -440,6 +440,14 @@ class TrafficModel(Model):
         else:
             return 0  # Default reward for unknown modes
 
+    def get_agent_credits(self): #CREDIT SCHEME
+            """
+            Retrieve the credits of all agents in the simulation.
+            Returns:
+                dict: A dictionary mapping agent IDs to their credits.
+            """
+            return {agent.unique_id: agent.credits for agent in self.schedule.agents}
+
     def update_route_based_on_mode_and_direction(self, agent, selected_mode):
         """
         Update the route and graph based on the selected transport mode and direction (CA -> A or A -> CA).
@@ -477,7 +485,7 @@ class TrafficModel(Model):
         # print(f"--- Step {self.step_count} in Episode {self.current_episode} ---")
         self.schedule.step()
 
-         # Calculate CO2 emissions for this step
+        # Calculate CO2 emissions for this step
         step_emissions = sum(
             agent.distance_travelled * self.co2_factors[agent.last_action]
             for agent in self.schedule.agents if not agent.completed
@@ -499,6 +507,7 @@ class TrafficModel(Model):
             print(f"--- Episode {self.current_episode} Completed ---")
             print(f"CO2 Emissions This Episode: {self.current_episode_emissions}")
             
+            
             # Recalculate cumulative emissions
             self.co2_emissions_over_time = [
                 sum(self.co2_emissions_per_episode[:i+1])
@@ -512,7 +521,13 @@ class TrafficModel(Model):
                 self.reset_environment()
             elif self.current_episode == self.episodes - 1:
                 self.simulation_finished = True
-
+                
+        if self.simulation_finished:
+                # At the end of the simulation, print the final credits for all agents
+                print(f"--- Simulation Completed ---")
+                print(f"Final Agent Credits:")
+                for agent in self.schedule.agents:
+                    print(f"Agent {agent.unique_id}: {agent.credits} credits")
 
 class TrafficAgent:
     def __init__(self, unique_id, model, start_node, end_node, route_graph, route_name, normalized_route_edges, speed=10, step_time=10):
@@ -548,7 +563,15 @@ class TrafficAgent:
         self.current_edge_index = 0
         self.edge_travelled = 0.0
         self.normalized_route_edges = normalized_route_edges
-        
+        self.credits = 0 #CREDIT SCHEME
+
+        #CO2 emission per km for each transport mode (CREDIT SCHEME)
+        self.co2_emissions_per_km = {
+            "Bike": 0,
+            "Car": 120,
+            "PublicTransport": 50,
+        }
+
         # Extract initial transport mode from route name
         self.last_action = self.get_mode_from_route(route_name)
         
@@ -560,6 +583,26 @@ class TrafficAgent:
             self.origin = "Campo Alegre"
             self.destination = "Asprela"
     
+    def calculate_co2_emissions(self): #CREDIT SCHEME
+        """
+        Calculate the CO2 emissions for the distance travelled in the current step
+        """
+        distance_km = (self.speed * self.step_time)/1000
+        co2_emission = self.co2_emissions_per_km[self.last_action]*distance_km
+        return co2_emission
+    def update_credits(self, co2_emission): #CREDIT SCHEME
+        """
+        Update the agent's credit based on CO2 emissions. 
+        Penalty for high emissions, credits for low emissions.
+        """
+        if co2_emission == 0:
+            self.credits += 10
+        elif co2_emission <= 50:
+            self.credits += 5
+        elif co2_emission <= 100:
+            self.credits -= 10 #penatly fod high emissions
+
+  
     def get_state(self):
         """
         Define the state of the agent based solely on the last chosen mode of transport.
@@ -638,6 +681,10 @@ class TrafficAgent:
         distance_this_step = self.speed * self.step_time
         self.distance_travelled += distance_this_step
         self.elapsed_time += self.step_time
+
+        #Calculate CO2 emissions and update credits (CREDIT SCHEME)
+        co2_emission = self.calculate_co2_emissions()
+        self.update_credits(co2_emission)
 
         # Check if the agent has completed the route
         if self.distance_travelled >= self.route_length:
