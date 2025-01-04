@@ -110,6 +110,17 @@ class TrafficModel(Model):
         self.current_episode = 0
         self.simulation_finished = False
         
+        #ENVIRONMENTAL FACTORS
+        self.weather = "sunny" #clear, rain, extreme heat
+        self.global_fuel_prices = 1.5
+        self.parking_fees = 1.0
+        self.ticket_prices = 1.0
+        self.service_quality = {"Bus":1.0, "Metro":1.0}
+        self.hills = True
+        self.household_sizes = {}
+        self.congestion_charges =0.0
+
+
         # Q-table: Nested dictionary for state-action pairs
         self.q_table = {}
         
@@ -120,7 +131,20 @@ class TrafficModel(Model):
         
         # Initialize environment and agents
         self.reset_environment()
-
+    def adjust_costs_for_environment(self, mode):
+        """
+        Adjust transportation costs based on environmental factors.
+        """
+        if mode == "Car":
+            fuel_cost = 1.0 * self.global_fuel_prices
+            parking_cost = self.parking_fees
+            return fuel_cost + parking_cost + self.congestion_charges
+        elif mode == "PublicTransport":
+            return self.ticket_prices * self.service_quality["Bus"]
+        elif mode == "Bike":
+            return 0  # Biking is assumed to have no direct cost
+        return 0
+    
     def reset_environment(self):
         """Reset the simulation environment while retaining Q-table."""
         
@@ -398,6 +422,16 @@ class TrafficModel(Model):
                 print(f"Route name {route_name} does not match expected prefixes. Skipping agent {i}.")
                 continue
 
+            # Determine household size for the agent
+            household_size = self.random.randint(1, 5)  # Random size between 1 and 5
+            self.household_sizes[i] = household_size
+
+            # Adjust agent speed and preferences based on environmental conditions
+            if self.hills and "Bike" in route_name:
+                agent_speed = 2.5  # Slower speed due to hills
+            else:
+                agent_speed = 3.0 if "Bike" in route_name else 4.0  # Default speeds
+
             # Ensure the start and end nodes exist in the main graph
             if start_node not in self.graph.nodes or end_node not in self.graph.nodes:
                 print(f"Skipping agent {i} due to invalid start or end node.")
@@ -480,7 +514,16 @@ class TrafficModel(Model):
         """
         if self.simulation_finished:
             return
-        
+        # Apply weather effects
+        if self.weather == "rain":
+            for agent in self.schedule.agents:
+                if agent.last_action == "Bike":
+                    agent.speed *= 0.75  # Slow down bikes
+        elif self.weather == "extreme_heat":
+            for agent in self.schedule.agents:
+                if agent.last_action in ["Bike", "Walk"]:
+                    agent.speed *= 0.8  # Discourage active modes
+
         # print(f"--- Step {self.step_count} in Episode {self.current_episode} ---")
         self.schedule.step()
 
