@@ -100,7 +100,6 @@ class TrafficModel(Model):
         }
         self.mode_distributions = []
 
-
         self.total_co2_emissions = 0  # Cumulative CO2 emissions across all episodes
         self.co2_emissions_over_time = []
         self.co2_emissions_per_episode = []  # CO2 emissions per episode
@@ -568,8 +567,8 @@ class TrafficAgent:
         #CO2 emission per km for each transport mode (CREDIT SCHEME)
         self.co2_emissions_per_km = {
             "Bike": 0,
-            "Car": 120,
-            "PublicTransport": 50,
+            "Car": 170,
+            "PublicTransport": 97,
         }
 
         # Extract initial transport mode from route name
@@ -597,10 +596,10 @@ class TrafficAgent:
         """
         if co2_emission == 0:
             self.credits += 10
-        elif co2_emission <= 50:
+        elif co2_emission >= 50:
             self.credits += 5
-        elif co2_emission <= 100:
-            self.credits -= 10 #penatly fod high emissions
+        elif co2_emission >= 100:
+            self.credits -= 10 #penatly for high emissions
 
   
     def get_state(self):
@@ -608,7 +607,6 @@ class TrafficAgent:
         Define the state of the agent based solely on the last chosen mode of transport.
         """
         return self.last_action
-
     
     def get_possible_actions(self):
         """Define possible actions (mocked for simplicity)."""
