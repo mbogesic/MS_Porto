@@ -570,7 +570,11 @@ class TrafficAgent:
             "Car": 170,
             "PublicTransport": 97,
         }
-
+        # HUMAN FACTOR PROPERTIES
+        self.human_factor = random.uniform(0.5, 1.0)  # Resistance to change (0.5 - 1.0)
+        self.defiance = random.uniform(0, 0.1)  # Small probability of defying logic (0-10%)
+        self.last_action = "Car"  # Default transport mode
+        
         # Extract initial transport mode from route name
         self.last_action = self.get_mode_from_route(route_name)
         
@@ -601,7 +605,26 @@ class TrafficAgent:
         elif co2_emission >= 100:
             self.credits -= 10 #penatly for high emissions
 
-  
+    def select_action(self):
+        """
+        Choose the next transport mode using ε-greedy policy while incorporating human factors and defiance.
+        """
+        state = self.get_state()
+        # Ensure the state is initialized in the Q-table
+        if state not in self.model.q_table:
+            self.model.q_table[state] = {a: 0 for a in self.get_possible_actions()}
+        # Check for defiance (irrational decision-making)
+        if random.random() < self.defiance:
+            # Defy logic: pick a random action regardless of Q-values
+            return random.choice(self.get_possible_actions())
+        # ε-greedy policy: explore or exploit
+        if random.random() < self.model.epsilon:
+            return random.choice(self.get_possible_actions())  # Explore
+        # Incorporate human factor into exploitation
+        best_action = max(self.get_possible_actions(), 
+                        key=lambda action: self.model.q_table[state][action] * (1 - self.human_factor))
+        return best_action
+
     def get_state(self):
         """
         Define the state of the agent based solely on the last chosen mode of transport.
@@ -737,7 +760,10 @@ class TrafficAgent:
         # Update Q-value for the chosen action
         current_state = self.get_state()
         reward = self.model.compute_reward(self)  # Compute reward for the current mode
-        self.update_q_value(current_state, self.last_action, reward, self.last_action)  # Next state is the same as selected mode
+        next_action = self.select_action()  #HUMAN FACTOR
+        self.update_q_value(current_state, self.last_action, reward, next_action)  # Next state is the same as selected mode
+        
+        self.last_action = next_action #HUMAN FACTOR
 
         # Simulate movement and completion logic
         self.move()
