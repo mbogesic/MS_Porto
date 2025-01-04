@@ -37,14 +37,16 @@ app.layout = html.Div([
     dcc.Interval(
         id="interval-component",
         interval=1000,  # 1000ms = 1 second
-        n_intervals=0
+        n_intervals=0,
+        disabled=False
     ),
 ])
 
 @app.callback(
     [Output("metric-plot", "figure"), 
     Output("episode-plot", "figure"), 
-    Output("credits-plot", "figure")],  # Include the credits plot
+    Output("credits-plot", "figure"),  # Include the credits plot
+    Output("interval-component", "disabled")],
     [Input("interval-component", "n_intervals")]
 )
 def update_plots(n_intervals):
@@ -114,6 +116,7 @@ def update_plots(n_intervals):
                 yaxis=dict(title="Credits")
             )
         )
+        return cumulative_plot, episode_plot, credits_plot, True
     else:
         # Show a placeholder plot if the simulation is not finished
         credits_plot = go.Figure(
@@ -128,7 +131,7 @@ def update_plots(n_intervals):
                 yaxis=dict(title="Credits")
             )
         )
-    return cumulative_plot, episode_plot, credits_plot
+        return cumulative_plot, episode_plot, credits_plot, False
 
 if __name__ == "__main__":
     # Initialize the model
