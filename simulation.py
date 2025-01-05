@@ -111,7 +111,8 @@ class TrafficModel(Model):
         self.simulation_finished = False
         
         #ENVIRONMENTAL FACTORS
-        self.weather = "sunny" #clear, rain, extreme heat
+        self.weather_conditions = ["sunny", "rainy", "extreme heat"]  # Define possible weather conditions
+        self.current_weather = "sunny"  # Initialize default weather
         self.global_fuel_prices = 1.5
         self.parking_fees = 1.0
         self.ticket_prices = 1.0
@@ -120,6 +121,7 @@ class TrafficModel(Model):
         self.household_sizes = {}
         self.congestion_charges =0.0
 
+    
 
         # Q-table: Nested dictionary for state-action pairs
         self.q_table = {}
@@ -131,6 +133,19 @@ class TrafficModel(Model):
         
         # Initialize environment and agents
         self.reset_environment()
+
+    def start_new_episode(self): #WEATHER TEST
+        """
+        Initialize settings for a new episode, including randomizing weather.
+        """
+        # Randomly set the weather for this episode
+        self.current_weather = random.choice(self.weather_conditions)
+        print(f"Starting episode {self.current_episode + 1} with weather: {self.current_weather}")     
+        # Reset current episode emissions
+        self.current_episode_emissions = 0
+        # Increment the current episode counter
+        self.current_episode += 1
+
     def adjust_costs_for_environment(self, mode):
         """
         Adjust transportation costs based on environmental factors.
@@ -186,6 +201,12 @@ class TrafficModel(Model):
             # Update Q-values
             agent.update_q_value(current_state, action, reward, next_state)
             
+<<<<<<< Updated upstream
+=======
+            if self.current_weather == "rain" or self.current_weather == "extreme_heat":
+                agent.speed *= 0.8  # Slow down motorized transport
+                
+>>>>>>> Stashed changes
             agent.reset_for_new_episode()
         
         # # After loading routes
@@ -549,11 +570,11 @@ class TrafficModel(Model):
         self.epsilon = max(0.01, self.epsilon * 0.95)  # Decay but keep a minimum exploration
   
         # Apply weather effects
-        if self.weather == "rain":
+        if self.current_weather == "rain":
             for agent in self.schedule.agents:
                 if agent.last_action == "Bike":
                     agent.speed *= 0.75  # Slow down bikes
-        elif self.weather == "extreme_heat":
+        elif self.current_weather == "extreme_heat":
             for agent in self.schedule.agents:
                 if agent.last_action in ["Bike", "Walk"]:
                     agent.speed *= 0.8  # Discourage active modes
@@ -640,7 +661,7 @@ class TrafficAgent:
         self.edge_travelled = 0.0
         self.normalized_route_edges = normalized_route_edges
         self.credits = 0 #CREDIT SCHEME
-
+        self.income_level = random.choice(["low", "medium", "high"])
         #CO2 emission per km for each transport mode (CREDIT SCHEME)
         self.co2_emissions_per_km = {
             "Bike": 0,
@@ -720,13 +741,22 @@ class TrafficAgent:
         # Ensure the state is initialized in the Q-table
         if state not in self.model.q_table:
             self.model.q_table[state] = {a: 0 for a in self.get_possible_actions()}
+        # Get environmental factors
+        weather = self.model.current_weather
+        fuel_price = self.model.global_fuel_prices
 
         # Check for defiance (irrational decision-making)
         if random.random() < self.defiance:
-            return random.choice(self.get_possible_actions())  # Defy logic: random action
+            #return random.choice(self.get_possible_actions())  # Defy logic: random action
+            possible_actions = self.get_possible_actions() #for low-income agents
+            # Restrict "Car" for low-income agents
+            if self.income_level == "low" and "Car" in possible_actions:
+                possible_actions.remove("Car")
+            return random.choice(possible_actions)  # Defy logic: random action
 
         # ε-greedy policy: explore or exploit
         if random.random() < self.model.epsilon:
+<<<<<<< Updated upstream
             return random.choice(self.get_possible_actions())  # Explore
 
         # Incorporate credits into Q-value exploitation
@@ -734,6 +764,39 @@ class TrafficAgent:
             self.get_possible_actions(),
             key=lambda action: self.model.q_table[state][action] + (self.credits / 20 if action == "Bike" else 0)
         )
+=======
+            #return random.choice(self.get_possible_actions())  # Explore
+            possible_actions = self.get_possible_actions() #for low income agents
+            if self.income_level == "low" and "Car" in possible_actions:
+                possible_actions.remove("Car")       
+            return random.choice(possible_actions)  # Explore
+
+        # Adjust credit influence using logarithmic scaling
+        credit_influence = (self.credits / 50) if self.credits < 500 else (500 + (self.credits - 500) ** 0.5)
+
+            # Define a function to compute the action score, incorporating Q-values, environmental factors, and credits
+        def compute_action_score(action):
+            q_value = self.model.q_table[state][action]           
+            # Penalize "Car" usage during high fuel prices
+            if action == "Car" and fuel_price > 1.5:
+                q_value -= 10           
+            # Penalize "Bike" usage during rainy weather
+            if action == "Bike" and weather == "rainy":
+                q_value -= 5
+            # Incorporate credits influence for "Bike"
+            if action == "Bike":
+                q_value += credit_influence           
+            # Incorporate human factor adjustment
+            q_value *= max(1 - self.human_factor, 0.5)
+            return q_value
+
+        # Filter actions to exclude "Car" for low-income agents
+        possible_actions = self.get_possible_actions()
+        if self.income_level == "low" and "Car" in possible_actions:
+            possible_actions.remove("Car")
+        # Select the best action based on the computed action score
+        best_action = max(possible_actions, key=compute_action_score)       
+>>>>>>> Stashed changes
         return best_action
 
 
@@ -929,9 +992,10 @@ if __name__ == "__main__":
     episode_count = 0
     
     while not model.simulation_finished:
-        model.step()
-        step_count += 1
+    
         if episode_count != model.current_episode:
+            model.start_new_episode()  # Randomize weather and reset emissions
             episode_count = model.current_episode
             step_count = 0
-        
+        model.step()
+        step_count += 1
