@@ -201,12 +201,9 @@ class TrafficModel(Model):
             # Update Q-values
             agent.update_q_value(current_state, action, reward, next_state)
             
-<<<<<<< Updated upstream
-=======
             if self.current_weather == "rain" or self.current_weather == "extreme_heat":
                 agent.speed *= 0.8  # Slow down motorized transport
                 
->>>>>>> Stashed changes
             agent.reset_for_new_episode()
         
         # # After loading routes
@@ -756,15 +753,6 @@ class TrafficAgent:
 
         # ε-greedy policy: explore or exploit
         if random.random() < self.model.epsilon:
-<<<<<<< Updated upstream
-            return random.choice(self.get_possible_actions())  # Explore
-
-        # Incorporate credits into Q-value exploitation
-        best_action = max(
-            self.get_possible_actions(),
-            key=lambda action: self.model.q_table[state][action] + (self.credits / 20 if action == "Bike" else 0)
-        )
-=======
             #return random.choice(self.get_possible_actions())  # Explore
             possible_actions = self.get_possible_actions() #for low income agents
             if self.income_level == "low" and "Car" in possible_actions:
@@ -796,7 +784,6 @@ class TrafficAgent:
             possible_actions.remove("Car")
         # Select the best action based on the computed action score
         best_action = max(possible_actions, key=compute_action_score)       
->>>>>>> Stashed changes
         return best_action
 
 
