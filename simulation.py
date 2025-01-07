@@ -57,6 +57,49 @@ class CongestionNetworkGrid(NetworkGrid):
         """
         edge_key = (u, v)
         return len(self.edge_congestion.get(edge_key, []))
+    def compute_congestion_penalty(self, u, v):
+        """
+        Compute a congestion penalty for cars based on the number of agents on edge (u, v).
+        """
+        congestion_level = self.get_edge_congestion(u, v)
+        
+        # Define a congestion threshold; above this, penalties increase significantly
+        congestion_threshold = 10  # Example threshold
+
+        if congestion_level > congestion_threshold:
+            congestion_factor = congestion_level / congestion_threshold
+            # The higher the congestion factor, the greater the penalty
+            return congestion_factor
+        else:
+            return 1.0  # Minimal or no congestion
+
+    def update_car_penalties(self, agent, u, v):
+        """
+        Adjust car penalties and credits based on congestion and emissions.
+        """
+        if agent.mode == "Car":  # Only apply penalties to cars
+            # Compute the congestion penalty
+            congestion_penalty = self.compute_congestion_penalty(u, v)
+            
+            # Increase travel time and emissions due to congestion
+            agent.travel_time *= congestion_penalty
+            agent.co2_emissions *= congestion_penalty
+            
+            # Base credit penalties for car usage
+            base_penalty = -40  # Default penalty for using a car
+            congestion_credit_penalty = -10 * (congestion_penalty - 1)  # Additional penalty per congestion factor
+            
+            # Calculate total penalty based on CO2 emissions
+            if agent.co2_emissions > 100:  # Example threshold for high emissions
+                co2_penalty = -20  # Extra penalty for high emissions
+            else:
+                co2_penalty = -5  # Smaller penalty for moderate emissions
+
+            # Total penalty = base penalty + congestion penalty + CO2 penalty
+            total_penalty = base_penalty + congestion_credit_penalty + co2_penalty
+            
+            # Apply penalties to agent credits
+            agent.credits += total_penalty
 
 class TrafficModel(Model):
     def __init__(self, nodes_and_edges_folder, num_agents, step_time=10, episodes=100, alpha=0.3, gamma=0.9, epsilon=0.1, combined_nodes_file=None, combined_edges_file=None):
@@ -187,6 +230,8 @@ class TrafficModel(Model):
         # Store the start distribution for analysis
         self.mode_distributions.append(start_distribution)
         print(f"+++ Episode {self.current_episode} Started +++")
+        self.current_weather = random.choice(self.weather_conditions)
+        print(f"weather: {self.current_weather}")
         print(f"Mode Distribution: {start_distribution}")
 
         # Reset agents for the new episode
