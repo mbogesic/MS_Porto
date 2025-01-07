@@ -167,7 +167,6 @@ class TrafficModel(Model):
         self.simulation_finished = False
         self.step_count = 0
         self.current_episode_emissions = 0
-        
         # Count mode distribution at the start of the episode
         start_distribution = {"Bike": 0, "PublicTransport": 0, "Car": 0}
         
