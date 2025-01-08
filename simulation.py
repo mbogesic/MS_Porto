@@ -243,8 +243,8 @@ class TrafficModel(Model):
         # Store the start distribution for analysis
         self.mode_distributions.append(start_distribution)
         print(f"+++ Episode {self.current_episode} Started +++")
-        self.current_weather = random.choice(self.weather_conditions)
-        print(f"weather: {self.current_weather}")
+        #self.current_weather = random.choice(self.weather_conditions)
+        #print(f"weather: {self.current_weather}")
         print(f"Mode Distribution: {start_distribution}")
         # self.initialize_weather()
 
