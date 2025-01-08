@@ -59,7 +59,7 @@ class CongestionNetworkGrid(NetworkGrid):
         return len(self.edge_congestion.get(edge_key, []))
 
 class TrafficModel(Model):
-    def __init__(self, nodes_and_edges_folder, num_agents, step_time=10, episodes=100, alpha=0.3, gamma=0.9, epsilon=0.1, combined_nodes_file=None, combined_edges_file=None):
+    def __init__(self, nodes_and_edges_folder, num_agents, step_time=10, episodes=100, num_clusters=3, alpha=0.3, gamma=0.9, epsilon=0.1, combined_nodes_file=None, combined_edges_file=None):
         """
         Initialize the traffic model.
 
@@ -104,9 +104,13 @@ class TrafficModel(Model):
         self.co2_emissions_over_time = []
         self.co2_emissions_per_episode = []  # CO2 emissions per episode
         self.current_episode_emissions = 0  # Running total for the current episode
+        self.num_clusters = num_clusters  # Number of clusters
+        self.cluster_q_tables = {i: {} for i in range(num_clusters)}  # Q-tables for each cluster
         self.alpha = alpha
         self.gamma = gamma
         self.epsilon = epsilon
+        self.cluster_definitions = self.define_clusters()  # Define clusters based on attributes
+
         self.current_episode = 0
         self.simulation_finished = False
         
@@ -621,7 +625,27 @@ class TrafficModel(Model):
         #         print(f"Final Agent Credits:")
         #         for agent in self.schedule.agents:
         #             print(f"Agent {agent.unique_id}: {agent.credits} credits")
+        
+    def define_clusters(self):
+        """
+        Define clusters based on agent characteristics.
+        Returns a dictionary mapping cluster IDs to criteria.
+        """
+        return {
+            0: {"income": ["low"]},
+            1: {"income": ["medium"]},
+            2: {"income": ["high"]},
+        }
 
+    def get_cluster(self, agent):
+        """
+        Assign an agent to a cluster based on its characteristics.
+        """
+        for cluster_id, criteria in self.cluster_definitions.items():
+            if agent.income_level in criteria.get("income", []):
+                return cluster_id
+        return 0  # Default to cluster 0 if no match
+    
 class TrafficAgent:
     def __init__(self, unique_id, model, start_node, end_node, route_graph, route_name, normalized_route_edges, speed=10, step_time=10):
         """
@@ -649,6 +673,9 @@ class TrafficAgent:
         self.step_cnt = 0  # Counter for the number of steps taken
         self.distance_travelled = 0.0  # Initialize distance travelled
         self.elapsed_time = 0.0
+        self.income_level = random.choice(["low", "medium", "high"])
+        self.cluster = self.model.get_cluster(self)  # Assign the agent to a cluster
+        self.q_table = self.model.cluster_q_tables[self.cluster]  # Reference the cluster's Q-table
         self.completed = False
         self.counted = False
         self.route_length = self.model.route_lengths[self.route_name]
@@ -657,7 +684,7 @@ class TrafficAgent:
         self.edge_travelled = 0.0
         self.normalized_route_edges = normalized_route_edges
         self.credits = 0 #CREDIT SCHEME
-        self.income_level = random.choice(["low", "medium", "high"])
+
         #CO2 emission per km for each transport mode (CREDIT SCHEME)
         self.co2_emissions_per_km = {
             "Bike": 0,
@@ -737,6 +764,9 @@ class TrafficAgent:
         # Ensure the state is initialized in the Q-table
         if state not in self.model.q_table:
             self.model.q_table[state] = {a: 0 for a in self.get_possible_actions()}
+        if state not in self.q_table:
+            self.q_table[state] = {a: 0 for a in self.get_possible_actions()}
+
         # Get environmental factors
         weather = self.model.current_weather
         fuel_price = self.model.global_fuel_prices
@@ -782,8 +812,13 @@ class TrafficAgent:
         if self.income_level == "low" and "Car" in possible_actions:
             possible_actions.remove("Car")
         # Select the best action based on the computed action score
+        # If environmentally aware (prefer community choice)
+        #if :
         best_action = max(possible_actions, key=compute_action_score)       
-        return best_action
+        return best_action  # Exploit
+        # If individual q_table is preferred:
+        #else:
+            #return max(self.q_table[state], key=self.q_table[state].get)  # Exploit
 
 
     def get_state(self):
@@ -812,6 +847,7 @@ class TrafficAgent:
         Update the Q-value for the chosen mode of transport.
         Includes credits as a factor in the reward.
         """
+        ## MODEL ##
         
         # Normalize credits to scale the reward
         reward_with_credits = reward + (self.credits / 100)
@@ -828,6 +864,19 @@ class TrafficAgent:
         current_q = self.model.q_table[state][action]
         max_next_q = max(self.model.q_table[next_state].values(), default=0)
         self.model.q_table[state][action] = current_q + self.model.alpha * (reward_with_credits + self.model.gamma * max_next_q - current_q)
+        
+        ## CLUSTER ##
+        
+        if state not in self.q_table:
+            self.q_table[state] = {a: 0 for a in self.get_possible_actions()}
+        if next_state not in self.q_table:
+            self.q_table[next_state] = {a: 0 for a in self.get_possible_actions()}
+
+        # Q-learning update rule
+        current_q = self.q_table[state][action]
+        max_next_q = max(self.q_table[next_state].values(), default=0)
+        self.q_table[state][action] = current_q + self.model.alpha * (reward + self.model.gamma * max_next_q - current_q)
+
 
 
     def get_assigned_route_edges(self):
