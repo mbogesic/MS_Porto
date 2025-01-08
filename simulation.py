@@ -161,6 +161,10 @@ class TrafficModel(Model):
         self.current_episode = 0
         self.simulation_finished = False
         
+        # New variables for traffic volume
+        self.traffic_volume_per_episode = []  # To track the traffic volume for each episode
+        self.current_episode_traffic_volume = 0  # Current traffic volume for this episode
+
         #ENVIRONMENTAL FACTORS
         # self.weather_conditions = ["sunny", "rain", "extreme_heat"]  # Define possible weather conditions
         # self.current_weather = "sunny"  # Initialize default weather
@@ -477,6 +481,7 @@ class TrafficModel(Model):
         return {
             "co2_emissions_over_time": self.co2_emissions_over_time,
             "co2_emissions_per_episode": self.co2_emissions_per_episode,
+            "traffic_volume_per_episode": self.traffic_volume_per_episode,  # Add traffic volume data
             "current_episode": self.current_episode,
             "total_co2_emissions": self.total_co2_emissions,
         }   
@@ -622,13 +627,25 @@ class TrafficModel(Model):
     #     agent.route_name = route_map[route_key]
     #     agent.route_graph = self.routes[self.route_names.index(agent.route_name)]
         
+    def update_traffic_volume(self):
+        """Calculate and update the traffic volume for the current episode."""
+        # For simplicity, we assume traffic volume is based on agents moving across routes
+        # You can customize this method to track the actual traffic volume
+        self.current_episode_traffic_volume = sum([agent.current_traffic_volume for agent in self.custom_agents])
+
+        # Store the traffic volume at the end of the episode
+        self.traffic_volume_per_episode.append(self.current_episode_traffic_volume)
+
     def step(self):
         """
         Advance the simulation by one step.
         """
         if self.simulation_finished:
             return
-        
+                
+        # After each step, update the traffic volume
+        self.update_traffic_volume()
+
         # Decay epsilon to reduce exploration over time
         self.epsilon = max(0.01, self.epsilon * 0.95)  # Decay but keep a minimum exploration
   
@@ -765,6 +782,9 @@ class TrafficAgent:
         # Extract initial transport mode from route name
         self.last_action = self.get_mode_from_route(route_name)
         
+
+        self.current_traffic_volume = 0  # Tracks the agent's contribution to traffic volume
+
         # Determine origin and destination 
         if start_node == 4523960189:
             self.origin = "Asprela"
@@ -951,6 +971,9 @@ class TrafficAgent:
         self.distance_travelled += distance_this_step
         self.elapsed_time += self.step_time
 
+        # Update traffic volume contribution
+        self.current_traffic_volume += distance_this_step  # Increment traffic volume based on distance traveled
+
         # Check if the agent has completed the route
         if self.distance_travelled >= self.route_length:
             if not self.completed:
@@ -1038,6 +1061,7 @@ class TrafficAgent:
         self.edge_travelled = 0.0
         self.current_edge_index = 0
         self.counted = False
+        self.current_traffic_volume = 0.0  # Reset traffic volume for the new episode
 
         # # Select transport mode for the new episode
         # self.last_action = self.select_action()

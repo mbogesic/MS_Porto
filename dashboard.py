@@ -33,6 +33,8 @@ app.layout = html.Div([
     html.H1("AMC Simulation Dashboard"),
     dcc.Graph(id="metric-plot", style={"width": "100%", "height": "400px"}),
     dcc.Graph(id="episode-plot", style={"width": "100%", "height": "400px"}),
+    dcc.Graph(id="traffic-volume-reduction-plot", style={"width": "100%", "height": "400px"}),  # New graph for traffic volume reduction
+    
     dcc.Graph(id="credits-plot", style={"width": "100%", "height": "400px"}),  # New graph for credits
     dcc.Interval(
         id="interval-component",
@@ -44,6 +46,8 @@ app.layout = html.Div([
 @app.callback(
     [Output("metric-plot", "figure"), 
     Output("episode-plot", "figure"), 
+    Output("traffic-volume-reduction-plot", "figure"),  # Include the traffic volume reduction plot
+
     Output("credits-plot", "figure")],  # Include the credits plot
     [Input("interval-component", "n_intervals")]
 )
@@ -85,6 +89,39 @@ def update_plots(n_intervals):
             yaxis=dict(title="CO2 Emissions (g)"),
         ),
     )
+
+# Traffic Volume Reduction Plot
+    if "traffic_volume_per_episode" not in data or not data["traffic_volume_per_episode"]:
+        traffic_volume_plot = go.Figure(
+            layout=go.Layout(
+                title="Traffic Volume Reduction Over Episodes (No Data)",
+                xaxis=dict(title="Episodes"),
+                yaxis=dict(title="Reduction Percentage (%)"),
+            )
+        )
+    else:
+        traffic_volume_initial = data["traffic_volume_per_episode"][0]
+        traffic_volume_reduction = [
+            (traffic_volume_initial - tv) / traffic_volume_initial * 100
+            for tv in data["traffic_volume_per_episode"]
+        ]
+
+        traffic_volume_plot = go.Figure(
+            data=[
+                go.Scatter(
+                    x=episode_numbers,
+                    y=traffic_volume_reduction,
+                    mode="lines+markers",
+                    name="Traffic Volume Reduction (%)",
+                )
+            ],
+            layout=go.Layout(
+                title="Traffic Volume Reduction Over Episodes",
+                xaxis=dict(title="Episodes"),
+                yaxis=dict(title="Reduction Percentage (%)"),
+            ),
+        )
+
 
     #CREDITS SCHEME
     #agent_credits = model.get_agent_credits()
@@ -128,7 +165,7 @@ def update_plots(n_intervals):
                 yaxis=dict(title="Credits")
             )
         )
-    return cumulative_plot, episode_plot, credits_plot
+    return cumulative_plot, episode_plot, traffic_volume_plot, credits_plot
 
 if __name__ == "__main__":
     # Initialize the model
