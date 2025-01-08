@@ -7,6 +7,7 @@ from mesa.time import RandomActivation
 import Formulas as f
 import random
 import warnings
+from pprint import pprint
 
 # Ignore all UserWarnings
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -176,12 +177,6 @@ class TrafficModel(Model):
         # self.household_sizes = {}
         # self.congestion_charges =0.0
 
-        self.episode_summary = {
-            "total_emissions": 0,
-            "agent_rewards": {},  # Agent-specific cumulative rewards
-            "agent_actions": {},  # Logged actions for each agent
-        }
-
         # Q-table: Nested dictionary for state-action pairs
         self.q_table = {}
         
@@ -189,6 +184,16 @@ class TrafficModel(Model):
         self.load_routes()
         self.validate_routes()
         self.add_agents()
+ 
+        self.episode_summary = {
+            "agents": {
+                agent.unique_id: {
+                    "emissions": 0,
+                    "rewards": 0,
+                    "actions": []
+                } for agent in self.custom_agents
+            }
+        }
         
         # Initialize environment and agents
         self.reset_environment()
@@ -219,10 +224,15 @@ class TrafficModel(Model):
         """Reset the simulation environment while retaining Q-table."""
         # Reset the episode summary
         self.episode_summary = {
-            "total_emissions": 0,
-            "agent_rewards": {},
-            "agent_actions": {},
+            "agents": {
+                agent.unique_id: {
+                    "emissions": 0,
+                    "rewards": 0,
+                    "actions": []
+                } for agent in self.custom_agents
+            }
         }
+
         self.completed_agents = 0
         self.simulation_finished = False
         self.step_count = 0
@@ -289,6 +299,7 @@ class TrafficModel(Model):
         # print(f"Agent {agent_id} has completed its journey.")
         agent = next(a for a in self.schedule.agents if a.unique_id == agent_id)
         agent.completed = True
+        
         # Set agent's last_action to a no-emission mode (e.g., "None")
         self.completed_agents += 1
 
@@ -496,10 +507,10 @@ class TrafficModel(Model):
             if route_index >= len(self.route_names):
                 raise IndexError(f"Generated route_index {route_index} exceeds route_names size {len(self.route_names)}")
 
-            if route_index == 0:
-                route_index = 3
-            if route_index == 2:
-                route_index = 5
+            # if route_index == 0:
+            #     route_index = 3
+            # if route_index == 2:
+            #     route_index = 5
                 
             route_graph = self.routes[route_index]
             route_name = self.route_names[route_index]  # Full route name, e.g., "Asprela_2_Campo_Alegre_route_1"
@@ -642,10 +653,8 @@ class TrafficModel(Model):
         """
         if self.simulation_finished:
             return
-                
-        # After each step, update the traffic volume
-        self.update_traffic_volume()
-
+        
+        self.step_count += 1   
         # Decay epsilon to reduce exploration over time
         self.epsilon = max(0.01, self.epsilon * 0.95)  # Decay but keep a minimum exploration
   
@@ -674,8 +683,11 @@ class TrafficModel(Model):
         self.current_episode_emissions += step_emissions
         self.total_co2_emissions += step_emissions
  
-        self.step_count += 1
 
+
+        # After each step, update the traffic volume
+        self.update_traffic_volume()
+        
         if self.completed_agents >= self.num_agents:
             # Ensure emissions are appended only once per episode
             if len(self.co2_emissions_per_episode) <= self.current_episode:
@@ -698,7 +710,7 @@ class TrafficModel(Model):
                 self.reset_environment()
             elif self.current_episode == self.episodes - 1:
                 self.simulation_finished = True
-                
+             
         # if self.simulation_finished:
         #         # At the end of the simulation, print the final credits for all agents
         #         print(f"--- Simulation Completed ---")
@@ -795,9 +807,9 @@ class TrafficAgent:
     
     def calculate_co2_emissions(self): #CREDIT SCHEME
         """
-        Calculate the CO2 emissions for the distance travelled in the current step
+        Calculate the CO2 emissions for the distance travelled in the current episode
         """
-        co2_emission = self.co2_emissions_per_mode[self.last_action]*self.step_time*self.step_cnt
+        co2_emission = self.co2_emissions_per_mode[self.last_action]*self.step_time*(self.step_cnt - 1)
         return co2_emission
     
     def update_credits(self, co2_emission):
@@ -904,46 +916,55 @@ class TrafficAgent:
         Update the Q-value for the chosen mode of transport.
         Includes credits as a factor in the reward.
         """
-        ## MODEL ##
-        
-        # Normalize credits to scale the reward
-        reward_with_credits = reward + (self.credits / 100)
+        ## WARMUP PHASE DONE ##
+        if self.model.current_episode == 30: 
+            # Q-learning update rule
+            current_q = self.model.q_table[state][action]
+            max_next_q = max(self.model.q_table[next_state].values(), default=0)
+            self.q_table[state][action] = current_q + self.alpha * (reward_with_credits + self.gamma * max_next_q - current_q)
+            
+        if self.model.current_episode < 30:
+            ## MODEL ##
+            
+            # Normalize credits to scale the reward
+            reward_with_credits = reward + (self.credits / 100)
 
-        # Ensure the current state is initialized in the Q-table
-        if state not in self.model.q_table:
-            self.model.q_table[state] = {a: 0 for a in self.get_possible_actions()}
+            # Ensure the current state is initialized in the Q-table
+            if state not in self.model.q_table:
+                self.model.q_table[state] = {a: 0 for a in self.get_possible_actions()}
 
-        # Ensure the next state is initialized in the Q-table
-        if next_state not in self.model.q_table:
-            self.model.q_table[next_state] = {a: 0 for a in self.get_possible_actions()}
+            # Ensure the next state is initialized in the Q-table
+            if next_state not in self.model.q_table:
+                self.model.q_table[next_state] = {a: 0 for a in self.get_possible_actions()}
 
-        # Q-learning update rule
-        current_q = self.model.q_table[state][action]
-        max_next_q = max(self.model.q_table[next_state].values(), default=0)
-        self.model.q_table[state][action] = current_q + self.model.alpha * (reward_with_credits + self.model.gamma * max_next_q - current_q)
-        
-        ## CLUSTER ##
-        
-        if state not in self.cluster_q_table:
-            self.cluster_q_table[state] = {a: 0 for a in self.get_possible_actions()}
-        if next_state not in self.cluster_q_table:
-            self.cluster_q_table[next_state] = {a: 0 for a in self.get_possible_actions()}
+            # Q-learning update rule
+            current_q = self.model.q_table[state][action]
+            max_next_q = max(self.model.q_table[next_state].values(), default=0)
+            self.model.q_table[state][action] = current_q + self.model.alpha * (reward_with_credits + self.model.gamma * max_next_q - current_q)
+            
+        else:  
+            ## CLUSTER ##
+            
+            if state not in self.cluster_q_table:
+                self.cluster_q_table[state] = {a: 0 for a in self.get_possible_actions()}
+            if next_state not in self.cluster_q_table:
+                self.cluster_q_table[next_state] = {a: 0 for a in self.get_possible_actions()}
 
-        # Q-learning update rule
-        current_q = self.cluster_q_table[state][action]
-        max_next_q = max(self.cluster_q_table[next_state].values(), default=0)
-        self.cluster_q_table[state][action] = current_q + self.model.alpha * (reward + self.model.gamma * max_next_q - current_q)
-        
-        ## INDIVIDUAL ##
-        if state not in self.q_table:
-            self.q_table[state] = {a: 0 for a in self.get_possible_actions()}
-        if next_state not in self.q_table:
-            self.q_table[next_state] = {a: 0 for a in self.get_possible_actions()}
+            # Q-learning update rule
+            current_q = self.cluster_q_table[state][action]
+            max_next_q = max(self.cluster_q_table[next_state].values(), default=0)
+            self.cluster_q_table[state][action] = current_q + self.model.alpha * (reward + self.model.gamma * max_next_q - current_q)
+            
+            ## INDIVIDUAL ##
+            if state not in self.q_table:
+                self.q_table[state] = {a: 0 for a in self.get_possible_actions()}
+            if next_state not in self.q_table:
+                self.q_table[next_state] = {a: 0 for a in self.get_possible_actions()}
 
-        # Q-learning update rule
-        current_q = self.q_table[state][action]
-        max_next_q = max(self.q_table[next_state].values(), default=0)
-        self.q_table[state][action] = current_q + self.alpha * (reward + self.gamma * max_next_q - current_q)
+            # Q-learning update rule
+            current_q = self.q_table[state][action]
+            max_next_q = max(self.q_table[next_state].values(), default=0)
+            self.q_table[state][action] = current_q + self.alpha * (reward + self.gamma * max_next_q - current_q)
 
     def get_assigned_route_edges(self):
         """
@@ -978,6 +999,8 @@ class TrafficAgent:
         if self.distance_travelled >= self.route_length:
             if not self.completed:
                 self.distance_travelled = self.route_length  # Cap at total route length
+                self.model.episode_summary["agents"][self.unique_id]["emissions"] += self.calculate_co2_emissions()
+                self.model.episode_summary["agents"][self.unique_id]["actions"].append(self.last_action)
                 self.model.agent_completed(self.unique_id)
             return
 
@@ -1020,15 +1043,12 @@ class TrafficAgent:
         """
         Execute a step in the agent's decision-making process.
         """
-        if self.completed:
-            if self.unique_id not in self.model.episode_summary["agent_actions"]:
-                self.model.episode_summary["agent_actions"].setdefault(self.unique_id, []).append(self.last_action)
-
+        if self.completed and not self.counted:
                 # Update Q-value for the chosen action
                 current_state = self.get_state()
                 self.update_credits(self.calculate_co2_emissions())  # Update credits based on CO2 emissions
                 reward = self.model.compute_reward(self)  # Compute reward for the current mode
-
+                self.model.episode_summary["agents"][self.unique_id]["rewards"] += reward
                 next_action = self.select_action()  #HUMAN FACTOR
                 self.update_q_value(current_state, self.last_action, reward, next_action)  # Next state is the same as selected mode
                 
@@ -1045,7 +1065,7 @@ class TrafficAgent:
                     self.credits -= 20  # Penalty for regressing to car use
                 
                 self.last_action = next_action #HUMAN FACTOR
-            return
+                self.counted = True
             
         # Simulate movement and completion logic
         self.move()
