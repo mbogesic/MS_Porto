@@ -446,6 +446,11 @@ class TrafficModel(Model):
             if route_index >= len(self.route_names):
                 raise IndexError(f"Generated route_index {route_index} exceeds route_names size {len(self.route_names)}")
 
+            if route_index == 0:
+                route_index = 3
+            if route_index == 2:
+                route_index = 5
+                
             route_graph = self.routes[route_index]
             route_name = self.route_names[route_index]  # Full route name, e.g., "Asprela_2_Campo_Alegre_route_1"
 
@@ -545,32 +550,32 @@ class TrafficModel(Model):
             """
             return {agent.unique_id: agent.credits for agent in self.schedule.agents}
 
-    def update_route_based_on_mode_and_direction(self, agent, selected_mode):
-        """
-        Update the route and graph based on the selected transport mode and direction (CA -> A or A -> CA).
+    # def update_route_based_on_mode_and_direction(self, agent, selected_mode):
+    #     """
+    #     Update the route and graph based on the selected transport mode and direction (CA -> A or A -> CA).
         
-        Parameters:
-            agent: The traffic agent to update.
-            selected_mode: The selected mode of transport (e.g., "Bike", "Car", "PublicTransport").
-        """
-        # Define a map for modes and routes, considering both directions
-        route_map = {
-            ("Asprela", "Campo Alegre", "Bike"): "Asprela_2_Campo_Alegre_Bike",
-            ("Asprela", "Campo Alegre", "PublicTransport"): "Asprela_2_Campo_Alegre_PublicTransport",
-            ("Asprela", "Campo Alegre", "Car"): "Asprela_2_Campo_Alegre_Car",
-            ("Campo Alegre", "Asprela", "Bike"): "Campo_Alegre_2_Asprela_Bike",
-            ("Campo Alegre", "Asprela", "PublicTransport"): "Campo_Alegre_2_Asprela_PublicTransport",
-            ("Campo Alegre", "Asprela", "Car"): "Campo_Alegre_2_Asprela_Car",
-        }
+    #     Parameters:
+    #         agent: The traffic agent to update.
+    #         selected_mode: The selected mode of transport (e.g., "Bike", "Car", "PublicTransport").
+    #     """
+    #     # Define a map for modes and routes, considering both directions
+    #     route_map = {
+    #         ("Asprela", "Campo Alegre", "Bike"): "Asprela_2_Campo_Alegre_Bike",
+    #         ("Asprela", "Campo Alegre", "PublicTransport"): "Asprela_2_Campo_Alegre_PublicTransport",
+    #         ("Asprela", "Campo Alegre", "Car"): "Asprela_2_Campo_Alegre_Car",
+    #         ("Campo Alegre", "Asprela", "Bike"): "Campo_Alegre_2_Asprela_Bike",
+    #         ("Campo Alegre", "Asprela", "PublicTransport"): "Campo_Alegre_2_Asprela_PublicTransport",
+    #         ("Campo Alegre", "Asprela", "Car"): "Campo_Alegre_2_Asprela_Car",
+    #     }
 
-        # Determine the route based on the agent's origin, destination, and mode
-        route_key = (agent.origin, agent.destination, selected_mode)
-        if route_key not in route_map:
-            raise ValueError(f"Invalid route or mode: {route_key}")
+    #     # Determine the route based on the agent's origin, destination, and mode
+    #     route_key = (agent.origin, agent.destination, selected_mode)
+    #     if route_key not in route_map:
+    #         raise ValueError(f"Invalid route or mode: {route_key}")
 
-        # Update the agent's route and graph
-        agent.route_name = route_map[route_key]
-        agent.route_graph = self.routes[self.route_names.index(agent.route_name)]
+    #     # Update the agent's route and graph
+    #     agent.route_name = route_map[route_key]
+    #     agent.route_graph = self.routes[self.route_names.index(agent.route_name)]
         
     def step(self):
         """
@@ -782,55 +787,24 @@ class TrafficAgent:
         if state not in self.q_table:
             self.q_table[state] = {a: 0 for a in self.get_possible_actions()}
 
-        # Get environmental factors
-        # weather = self.model.current_weather
-        # fuel_price = self.model.global_fuel_prices
-
-        # Check for defiance (irrational decision-making)
-        if random.random() < self.defiance:
-            #return random.choice(self.get_possible_actions())  # Defy logic: random action
-            possible_actions = self.get_possible_actions() #for low-income agents
-            # Restrict "Car" for low-income agents
-            # if self.income_level == "low" and "Car" in possible_actions:
-            #     possible_actions.remove("Car")
-            return random.choice(possible_actions)  # Defy logic: random action
-
-        # ε-greedy policy: explore or exploit
-        if random.random() < self.model.epsilon:
-            #return random.choice(self.get_possible_actions())  # Explore
-            possible_actions = self.get_possible_actions() #for low income agents
-            # if self.income_level == "low" and "Car" in possible_actions:
-            #     possible_actions.remove("Car")       
-            return random.choice(possible_actions)  # Explore
-
         # Adjust credit influence using logarithmic scaling
         credit_influence = (self.credits / 50) if self.credits < 500 else (500 + (self.credits - 500) ** 0.5)
 
-            # Define a function to compute the action score, incorporating Q-values, environmental factors, and credits
-        def compute_action_score(action):
-            q_value = self.model.q_table[state][action]           
-            # Penalize "Car" usage during high fuel prices
-            # if action == "Car" and fuel_price > 1.5:
-            #     q_value -= 10           
-            # # Penalize "Bike" usage during rainy weather
-            # if action == "Bike" and weather == "rain":
-            #     q_value -= 5
-            # Incorporate credits influence for "Bike"
-            if action == "Bike":
-                q_value += credit_influence           
-            # Incorporate human factor adjustment
-            q_value *= max(1 - self.human_factor, 0.5)
-            return q_value
-
-        # Filter actions to exclude "Car" for low-income agents
-        possible_actions = self.get_possible_actions()
-        # if self.income_level == "low" and "Car" in possible_actions:
-        #     possible_actions.remove("Car")
-        # Select the best action based on the computed action score
-        # If environmentally aware (prefer community choice)
-        #if:
-        best_action = max(possible_actions, key=compute_action_score)       
-        return best_action  # Exploit
+        # Ensure the state is initialized in the Q-table
+        if state not in self.model.q_table:
+            self.model.q_table[state] = {a: 0 for a in self.get_possible_actions()}
+        # Check for defiance (irrational decision-making)
+        if random.random() < self.defiance:
+            # Defy logic: pick a random action regardless of Q-values
+            return random.choice(self.get_possible_actions())
+        # ε-greedy policy: explore or exploit
+        if random.random() < self.model.epsilon:
+            return random.choice(self.get_possible_actions())  # Explore
+        # Incorporate human factor into exploitation
+        best_action = max(self.get_possible_actions(), 
+                        key=lambda action: self.model.q_table[state][action] * (1 - self.human_factor))
+        return best_action
+        # Exploit
         # If cluster q_table is preferred:
         #elif:
             #return max(self.cluster_q_table[state], key=self.q_table[state].get)  # Exploit
@@ -936,7 +910,6 @@ class TrafficAgent:
         if self.distance_travelled >= self.route_length:
             if not self.completed:
                 self.distance_travelled = self.route_length  # Cap at total route length
-                self.completed = True
                 self.model.agent_completed(self.unique_id)
             return
 
@@ -1021,8 +994,8 @@ class TrafficAgent:
         self.current_edge_index = 0
         self.counted = False
 
-        # Select transport mode for the new episode
-        self.last_action = self.select_action()
+        # # Select transport mode for the new episode
+        # self.last_action = self.select_action()
 
 # Main execution
 if __name__ == "__main__":
@@ -1030,7 +1003,7 @@ if __name__ == "__main__":
     nodes_and_edges_folder = "nodes_and_edges"
     combined_nodes_file = os.path.join(nodes_and_edges_folder, "all_routes_combined_nodes.csv")
     combined_edges_file = os.path.join(nodes_and_edges_folder, "all_routes_combined_edges.csv")
-    num_agents = 1
+    num_agents = 10
     step_time_dimension = 10.0   # s/step aka the "resolution" of the simulation
     episodes = 30
 
