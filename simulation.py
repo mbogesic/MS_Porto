@@ -107,7 +107,7 @@ class CongestionNetworkGrid(NetworkGrid):
             agent.credits += total_penalty
 
 class TrafficModel(Model):
-    def __init__(self, nodes_and_edges_folder, num_agents, step_time=10, episodes=100, num_clusters=3, alpha=0.3, gamma=0.9, epsilon=0.1, combined_nodes_file=None, combined_edges_file=None):
+    def __init__(self, nodes_and_edges_folder, num_agents, step_time=10, episodes=100, num_clusters=3, alpha=0.1, gamma=0.9, epsilon=0.1, combined_nodes_file=None, combined_edges_file=None):
         """
         Initialize the traffic model.
 
@@ -226,6 +226,12 @@ class TrafficModel(Model):
     
     def reset_environment(self):
         """Reset the simulation environment while retaining Q-table."""
+        if self.current_episode == 30:
+            self.total_co2_emissions = 0
+            self.co2_emissions_over_time = []
+            self.co2_emissions_per_episode = []
+            print("Transitioning from warmup to individual Q-tables.")
+                       
         # Reset the episode summary
         self.episode_summary = {
             "agents": {
@@ -262,6 +268,25 @@ class TrafficModel(Model):
         
         # Store the start distribution for analysis
         self.mode_distributions.append(start_distribution)
+        
+        # Dynamically adjust rewards during warmup
+        if self.current_episode < 30:
+            current_distribution = self.mode_distributions[-1] if self.mode_distributions else {"Bike": 0, "PublicTransport": 0, "Car": 0}
+            # Adjust reward multipliers based on current distribution
+            if current_distribution["Bike"] > 0.5 * self.num_agents:
+                self.bike_reward_multiplier = 0.8  # Reduce biking rewards
+            else:
+                self.bike_reward_multiplier = 1.0
+
+            if current_distribution["PublicTransport"] < 0.3 * self.num_agents:
+                self.public_transport_reward_multiplier = 1.2  # Boost public transport rewards
+            else:
+                self.public_transport_reward_multiplier = 1.0
+        else:
+            # Reset reward multipliers after warmup
+            self.bike_reward_multiplier = 1.0
+            self.public_transport_reward_multiplier = 1.0
+                
         print(f"+++ Episode {self.current_episode} Started +++")
         #self.current_weather = random.choice(self.weather_conditions)
         #print(f"weather: {self.current_weather}")
@@ -493,7 +518,7 @@ class TrafficModel(Model):
         }
 
     # print(f"Combined subgraph loaded with {len(self.combined_subgraph.nodes)} nodes and {len(self.combined_subgraph.edges)} edges.")
-    def get_episode_data(self):
+    def get_unfiltered_episode_data(self):
         """Returns the latest data for dashboard updates."""
         return {
             "co2_emissions_over_time": self.co2_emissions_over_time,
@@ -502,7 +527,41 @@ class TrafficModel(Model):
             "current_episode": self.current_episode,
             "total_co2_emissions": self.total_co2_emissions,
         }   
-        
+
+    def get_filtered_episode_data(self, start_episode=30):
+        """
+        Returns the latest data for dashboard updates, optionally filtering episodes starting from a specific point.
+
+        Parameters:
+            start_episode (int): The episode to start filtering data from (default is 0).
+
+        Returns:
+            dict: Filtered data for dashboard updates.
+        """
+        # Filter the CO2 emissions data
+        filtered_co2_emissions_per_episode = self.co2_emissions_per_episode[start_episode:]
+
+        # Filter the cumulative CO2 emissions
+        filtered_co2_emissions_over_time = [
+            sum(self.co2_emissions_per_episode[start_episode:i + start_episode + 1])
+            for i in range(len(filtered_co2_emissions_per_episode))
+        ]
+
+        # Filter traffic volume if applicable
+        filtered_traffic_volume_per_episode = (
+            self.traffic_volume_per_episode[start_episode:] 
+            if len(self.traffic_volume_per_episode) > start_episode else []
+        )
+
+        # Return filtered data
+        return {
+            "co2_emissions_over_time": filtered_co2_emissions_over_time,
+            "co2_emissions_per_episode": filtered_co2_emissions_per_episode,
+            "traffic_volume_per_episode": filtered_traffic_volume_per_episode,  # Add traffic volume data
+            "current_episode": self.current_episode,
+            "total_co2_emissions": self.total_co2_emissions,
+        }
+
     def add_agents(self):
         """
         Add agents to the model, assigning fixed start and end nodes based on the route.
@@ -586,12 +645,16 @@ class TrafficModel(Model):
         action = agent.last_action
 
         base_rewards = {
-            "Bike": 5,               # Base reward for biking
-            "PublicTransport": 3,  # Base reward for public transport
-            "Car": -5,               # Penalty for car use
+            "Bike": 5 if self.current_episode >= 30 else 3,  # Reduce biking reward during warmup
+            "PublicTransport": 3,  # Keep public transport reward constant
+            "Car": -5 if self.current_episode >= 30 else -3,  # Less aggressive car penalty during warmup
         }
         
-        reward = base_rewards[action] # Default reward based on action
+        # Penalize over-reliance on a single mode
+        mode_share = self.mode_distributions[-1][agent.last_action] / self.num_agents
+        overreliance_penalty = -2 * max(0, mode_share - 0.5)  # Penalty if mode share > 50%
+
+        reward = base_rewards[action] + overreliance_penalty # Default reward + penalty
         
         # Credits as a multiplier for biking
         credit_factor = agent.credits / 50  # Normalize credits impact
@@ -626,7 +689,7 @@ class TrafficModel(Model):
         elif action == "Car":
             return base_rewards["Car"] - co2_penalty # No bonus for cars
         else:
-            return base_rewards[action]  # Default reward
+            return reward  # Default reward
 
     def get_agent_credits(self): #CREDIT SCHEME
             """
@@ -681,7 +744,7 @@ class TrafficModel(Model):
         
         self.step_count += 1   
         # Decay epsilon to reduce exploration over time
-        self.epsilon = max(0.01, self.epsilon * 0.95)  # Decay but keep a minimum exploration
+        self.epsilon = max(0.05, self.epsilon * 0.99)  # Decay but keep a minimum exploration
   
         # # Apply weather effects
         # if self.current_weather == "rain":
@@ -724,7 +787,7 @@ class TrafficModel(Model):
             print(f"--- Episode {self.current_episode} Completed ---")
             print(f"CO2 Emissions This Episode: {self.current_episode_emissions}")
             
-            print(self.episode_summary)
+            # print(self.episode_summary)
             # Recalculate cumulative emissions
             self.co2_emissions_over_time = [
                 sum(self.co2_emissions_per_episode[:i+1])
@@ -857,15 +920,20 @@ class TrafficAgent:
         # Biking streak multiplier
         streak_multiplier = 1 + (self.biking_streak * 0.25)  # 25% bonus per streak
 
+
+        # Adjust credits for biking based on population share
+        bike_population_ratio = self.model.mode_distributions[-1]["Bike"] / self.model.num_agents
+        biking_adjustment = max(0.5, 1.5 - bike_population_ratio)  # Reduce reward as biking share increases
+
         # CO2 emission-based adjustment
-        co2_penalty = co2_emission * 0.15  # Increased penalty for emissions
+        co2_penalty = co2_emission * 0.1  # Increased penalty for emissions
         
         # CO2 savings bonus compared to cars
-        co2_savings_bonus = 10 if self.last_action == "PublicTransport" and co2_emission < 50 else 0
+        co2_savings_bonus = 5 if self.last_action == "PublicTransport" and co2_emission < 50 else 0
 
         # Credits calculation
         if self.last_action == "Bike":
-            self.credits += (base_credits["Bike"] * streak_multiplier)
+            self.credits += (base_credits["Bike"] * streak_multiplier * biking_adjustment)
         elif self.last_action == "PublicTransport":
             self.credits += (base_credits["PublicTransport"] + co2_savings_bonus - co2_penalty) * 1.2 # Apply a 20% multiplier
         elif self.last_action == "Car":
@@ -874,7 +942,7 @@ class TrafficAgent:
             self.credits += -co2_penalty
 
         if self.last_action == "Bike" and self.model.current_episode_emissions > self.model.total_co2_emissions * 0.8:
-            self.credits += 20  # Extra bonus for biking when emissions are high
+            self.credits += 5  # Extra bonus for biking when emissions are high
 
         
         # Ensure credits don't drop below zero
@@ -949,75 +1017,104 @@ class TrafficAgent:
             return "PublicTransport"
         else:
             raise ValueError(f"Unknown transport mode in route name: {route_name}")
-
+        
     def update_q_value(self, state, action, reward, next_state):
-        """
-        Update the Q-value for the chosen mode of transport.
-        Includes credits as a factor in the reward.
-        """
-        # Serialize state and next_state to make them hashable
         state_key = str(state)
         next_state_key = str(next_state)
+        
+        # Initialize Q-tables if state keys are not present
+        if state_key not in self.q_table:
+            self.q_table[state_key] = {a: 0 for a in self.get_possible_actions()}
+        if next_state_key not in self.q_table:
+            self.q_table[next_state_key] = {a: 0 for a in self.get_possible_actions()}
+        
+        global_q_table = self.model.q_table  # Access global Q-table
+        if state_key not in global_q_table:
+            global_q_table[state_key] = {a: 0 for a in self.get_possible_actions()}
+        if next_state_key not in global_q_table:
+            global_q_table[next_state_key] = {a: 0 for a in self.get_possible_actions()}
+        
+        # Q-value calculation
+        current_q = self.q_table[state_key][action]
+        max_next_q = max(self.q_table[next_state_key].values(), default=0)
+        global_q = global_q_table[state_key][action]
+        global_max_next_q = max(global_q_table[next_state_key].values(), default=0)
+        
+        # Calculate blended Q-value
+        blend_factor = min(1, self.model.current_episode / 30)  # Gradually increase blend factor
+        blended_q = blend_factor * current_q + (1 - blend_factor) * global_q
+        blended_max_next_q = blend_factor * max_next_q + (1 - blend_factor) * global_max_next_q
+        
+        self.q_table[state_key][action] = blended_q + self.alpha * (reward + self.gamma * blended_max_next_q - blended_q)
+
+    # def update_q_value(self, state, action, reward, next_state):
+    #     """
+    #     Update the Q-value for the chosen mode of transport.
+    #     Includes credits as a factor in the reward.
+    #     """
+    #     # Serialize state and next_state to make them hashable
+    #     state_key = str(state)
+    #     next_state_key = str(next_state)
     
-        ## WARMUP PHASE DONE ##
-        if self.model.current_episode == 30: 
-            # Q-learning update rule
-            # Normalize credits to scale the reward
-            reward_with_credits = reward + (self.credits / 100)
+    #     ## WARMUP PHASE DONE ##
+    #     if self.model.current_episode == 30: 
+    #         # Q-learning update rule
+    #         # Normalize credits to scale the reward
+    #         reward_with_credits = reward + (self.credits / 100)
             
-            if state_key not in self.q_table:
-                self.q_table[state_key] = {a: 0 for a in self.get_possible_actions()}
-            if next_state_key not in self.q_table:
-                self.q_table[next_state_key] = {a: 0 for a in self.get_possible_actions()}
+    #         if state_key not in self.q_table:
+    #             self.q_table[state_key] = {a: 0 for a in self.get_possible_actions()}
+    #         if next_state_key not in self.q_table:
+    #             self.q_table[next_state_key] = {a: 0 for a in self.get_possible_actions()}
             
-            current_q = self.model.q_table[state_key][action]
-            max_next_q = max(self.model.q_table[next_state_key].values(), default=0)
-            self.q_table[state_key][action] = current_q + self.alpha * (reward_with_credits + self.gamma * max_next_q - current_q)
+    #         current_q = self.model.q_table[state_key][action]
+    #         max_next_q = max(self.model.q_table[next_state_key].values(), default=0)
+    #         self.q_table[state_key][action] = current_q + self.alpha * (reward_with_credits + self.gamma * max_next_q - current_q)
             
-        if self.model.current_episode < 30:
-            ## MODEL ##
+    #     if self.model.current_episode < 30:
+    #         ## MODEL ##
             
-            # Normalize credits to scale the reward
-            reward_with_credits = reward + (self.credits / 100)
+    #         # Normalize credits to scale the reward
+    #         reward_with_credits = reward + (self.credits / 100)
 
-            # Ensure the current state is initialized in the Q-table
-            if state_key not in self.model.q_table:
-                self.model.q_table[state_key] = {a: 0 for a in self.get_possible_actions()}
+    #         # Ensure the current state is initialized in the Q-table
+    #         if state_key not in self.model.q_table:
+    #             self.model.q_table[state_key] = {a: 0 for a in self.get_possible_actions()}
 
-            # Ensure the next state is initialized in the Q-table
-            if next_state_key not in self.model.q_table:
-                self.model.q_table[next_state_key] = {a: 0 for a in self.get_possible_actions()}
+    #         # Ensure the next state is initialized in the Q-table
+    #         if next_state_key not in self.model.q_table:
+    #             self.model.q_table[next_state_key] = {a: 0 for a in self.get_possible_actions()}
 
-            # Q-learning update rule
-            current_q = self.model.q_table[state_key][action]
-            max_next_q = max(self.model.q_table[next_state_key].values(), default=0)
-            self.model.q_table[state_key][action] = current_q + self.model.alpha * (reward_with_credits + self.model.gamma * max_next_q - current_q)
+    #         # Q-learning update rule
+    #         current_q = self.model.q_table[state_key][action]
+    #         max_next_q = max(self.model.q_table[next_state_key].values(), default=0)
+    #         self.model.q_table[state_key][action] = current_q + self.model.alpha * (reward_with_credits + self.model.gamma * max_next_q - current_q)
             
-        else:  
-            ## CLUSTER ##
-            # Normalize credits to scale the reward
-            reward_with_credits = reward + (self.credits / 100)
+    #     else:  
+    #         ## CLUSTER ##
+    #         # Normalize credits to scale the reward
+    #         reward_with_credits = reward + (self.credits / 100)
             
-            # if state not in self.cluster_q_table:
-            #     self.cluster_q_table[state_key] = {a: 0 for a in self.get_possible_actions()}
-            # if next_state_key not in self.cluster_q_table:
-            #     self.cluster_q_table[next_state_key] = {a: 0 for a in self.get_possible_actions()}
+    #         # if state not in self.cluster_q_table:
+    #         #     self.cluster_q_table[state_key] = {a: 0 for a in self.get_possible_actions()}
+    #         # if next_state_key not in self.cluster_q_table:
+    #         #     self.cluster_q_table[next_state_key] = {a: 0 for a in self.get_possible_actions()}
 
-            # # Q-learning update rule
-            # current_q = self.cluster_q_table[state_key][action]
-            # max_next_q = max(self.cluster_q_table[next_state_key].values(), default=0)
-            # self.cluster_q_table[state_key][action] = current_q + self.model.alpha * (reward_with_credits + self.model.gamma * max_next_q - current_q)
+    #         # # Q-learning update rule
+    #         # current_q = self.cluster_q_table[state_key][action]
+    #         # max_next_q = max(self.cluster_q_table[next_state_key].values(), default=0)
+    #         # self.cluster_q_table[state_key][action] = current_q + self.model.alpha * (reward_with_credits + self.model.gamma * max_next_q - current_q)
             
-            ## INDIVIDUAL ##
-            if state_key not in self.q_table:
-                self.q_table[state_key] = {a: 0 for a in self.get_possible_actions()}
-            if next_state_key not in self.q_table:
-                self.q_table[next_state_key] = {a: 0 for a in self.get_possible_actions()}
+    #         ## INDIVIDUAL ##
+    #         if state_key not in self.q_table:
+    #             self.q_table[state_key] = {a: 0 for a in self.get_possible_actions()}
+    #         if next_state_key not in self.q_table:
+    #             self.q_table[next_state_key] = {a: 0 for a in self.get_possible_actions()}
 
-            # Q-learning update rule
-            current_q = self.q_table[state_key][action]
-            max_next_q = max(self.q_table[next_state_key].values(), default=0)
-            self.q_table[state_key][action] = current_q + self.alpha * (reward_with_credits + self.gamma * max_next_q - current_q)
+    #         # Q-learning update rule
+    #         current_q = self.q_table[state_key][action]
+    #         max_next_q = max(self.q_table[next_state_key].values(), default=0)
+    #         self.q_table[state_key][action] = current_q + self.alpha * (reward_with_credits + self.gamma * max_next_q - current_q)
 
     def get_assigned_route_edges(self):
         """
