@@ -737,8 +737,8 @@ class TrafficModel(Model):
                 self.current_episode += 1
                 self.reset_environment()
             elif self.current_episode == self.episodes - 1:
-                print("Episode Summary with States:")
-                pprint(self.episode_history)
+                # print("Episode Summary with States:")
+                # pprint(self.episode_history)
                 self.simulation_finished = True
              
         # if self.simulation_finished:
@@ -885,7 +885,7 @@ class TrafficAgent:
         """
         Choose the next transport mode using ε-greedy policy while incorporating human factors, defiance, and credits.
         """
-        state = self.get_state()
+        state = str(self.get_state())
         # Ensure the state is initialized in the Q-table
         if state not in self.model.q_table:
             self.model.q_table[state] = {a: 0 for a in self.get_possible_actions()}
@@ -1154,9 +1154,9 @@ if __name__ == "__main__":
     nodes_and_edges_folder = "nodes_and_edges"
     combined_nodes_file = os.path.join(nodes_and_edges_folder, "all_routes_combined_nodes.csv")
     combined_edges_file = os.path.join(nodes_and_edges_folder, "all_routes_combined_edges.csv")
-    num_agents = 1
+    num_agents = 100
     step_time_dimension = 10.0   # s/step aka the "resolution" of the simulation
-    episodes = 10
+    episodes = 50
 
     # Initialize the model
     model = TrafficModel(
