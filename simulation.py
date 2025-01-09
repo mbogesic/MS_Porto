@@ -196,6 +196,8 @@ class TrafficModel(Model):
             }
         }
         
+        self.episode_history = {}
+        
         # Initialize environment and agents
         self.reset_environment()
 
@@ -695,6 +697,9 @@ class TrafficModel(Model):
             if len(self.co2_emissions_per_episode) <= self.current_episode:
                 self.co2_emissions_per_episode.append(self.current_episode_emissions)
 
+            # Save the current episode's summary
+            self.episode_history[self.current_episode] = self.episode_summary
+
             print(f"--- Episode {self.current_episode} Completed ---")
             print(f"CO2 Emissions This Episode: {self.current_episode_emissions}")
             
@@ -1107,9 +1112,9 @@ if __name__ == "__main__":
     nodes_and_edges_folder = "nodes_and_edges"
     combined_nodes_file = os.path.join(nodes_and_edges_folder, "all_routes_combined_nodes.csv")
     combined_edges_file = os.path.join(nodes_and_edges_folder, "all_routes_combined_edges.csv")
-    num_agents = 10
+    num_agents = 1
     step_time_dimension = 10.0   # s/step aka the "resolution" of the simulation
-    episodes = 60
+    episodes = 10
 
     # Initialize the model
     model = TrafficModel(
