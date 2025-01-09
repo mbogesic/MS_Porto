@@ -190,7 +190,8 @@ class TrafficModel(Model):
                 agent.unique_id: {
                     "emissions": 0,
                     "rewards": 0,
-                    "actions": []
+                    "actions": [],
+                    "credits": 0
                 } for agent in self.custom_agents
             }
         }
@@ -228,7 +229,8 @@ class TrafficModel(Model):
                 agent.unique_id: {
                     "emissions": 0,
                     "rewards": 0,
-                    "actions": []
+                    "actions": [],
+                    "credits": 0
                 } for agent in self.custom_agents
             }
         }
@@ -919,6 +921,14 @@ class TrafficAgent:
         ## WARMUP PHASE DONE ##
         if self.model.current_episode == 30: 
             # Q-learning update rule
+            # Normalize credits to scale the reward
+            reward_with_credits = reward + (self.credits / 100)
+            
+            if state not in self.q_table:
+                self.q_table[state] = {a: 0 for a in self.get_possible_actions()}
+            if next_state not in self.q_table:
+                self.q_table[next_state] = {a: 0 for a in self.get_possible_actions()}
+            
             current_q = self.model.q_table[state][action]
             max_next_q = max(self.model.q_table[next_state].values(), default=0)
             self.q_table[state][action] = current_q + self.alpha * (reward_with_credits + self.gamma * max_next_q - current_q)
@@ -944,6 +954,8 @@ class TrafficAgent:
             
         else:  
             ## CLUSTER ##
+            # Normalize credits to scale the reward
+            reward_with_credits = reward + (self.credits / 100)
             
             if state not in self.cluster_q_table:
                 self.cluster_q_table[state] = {a: 0 for a in self.get_possible_actions()}
@@ -953,7 +965,7 @@ class TrafficAgent:
             # Q-learning update rule
             current_q = self.cluster_q_table[state][action]
             max_next_q = max(self.cluster_q_table[next_state].values(), default=0)
-            self.cluster_q_table[state][action] = current_q + self.model.alpha * (reward + self.model.gamma * max_next_q - current_q)
+            self.cluster_q_table[state][action] = current_q + self.model.alpha * (reward_with_credits + self.model.gamma * max_next_q - current_q)
             
             ## INDIVIDUAL ##
             if state not in self.q_table:
@@ -964,7 +976,7 @@ class TrafficAgent:
             # Q-learning update rule
             current_q = self.q_table[state][action]
             max_next_q = max(self.q_table[next_state].values(), default=0)
-            self.q_table[state][action] = current_q + self.alpha * (reward + self.gamma * max_next_q - current_q)
+            self.q_table[state][action] = current_q + self.alpha * (reward_with_credits + self.gamma * max_next_q - current_q)
 
     def get_assigned_route_edges(self):
         """
@@ -1049,6 +1061,7 @@ class TrafficAgent:
                 self.update_credits(self.calculate_co2_emissions())  # Update credits based on CO2 emissions
                 reward = self.model.compute_reward(self)  # Compute reward for the current mode
                 self.model.episode_summary["agents"][self.unique_id]["rewards"] += reward
+                self.model.episode_summary["agents"][self.unique_id]["credits"] += self.credits
                 next_action = self.select_action()  #HUMAN FACTOR
                 self.update_q_value(current_state, self.last_action, reward, next_action)  # Next state is the same as selected mode
                 
@@ -1073,6 +1086,8 @@ class TrafficAgent:
         
     def reset_for_new_episode(self):
         """Reset episode-specific attributes while retaining persistent data."""
+        if self.model.current_episode == 30:
+            self.credits = 0
         self.current_node = self.start  # Reset to start position
         self.distance_travelled = 0.0
         self.elapsed_time = 0.0
@@ -1094,7 +1109,7 @@ if __name__ == "__main__":
     combined_edges_file = os.path.join(nodes_and_edges_folder, "all_routes_combined_edges.csv")
     num_agents = 10
     step_time_dimension = 10.0   # s/step aka the "resolution" of the simulation
-    episodes = 30
+    episodes = 60
 
     # Initialize the model
     model = TrafficModel(
