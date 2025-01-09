@@ -31,6 +31,13 @@ app.title = "AMC Simulation Dashboard"
 
 app.layout = html.Div([
     html.H1("AMC Simulation Dashboard"),
+    dcc.Dropdown(
+            id='episode-dropdown',
+            placeholder="Select an Episode",
+            style={'width': '50%'}
+    ),
+    html.Div(id='episode-details', style={'marginTop': '20px'}),
+    
     dcc.Graph(id="metric-plot", style={"width": "100%", "height": "400px"}),
     dcc.Graph(id="episode-plot", style={"width": "100%", "height": "400px"}),
     dcc.Graph(id="traffic-volume-reduction-plot", style={"width": "100%", "height": "400px"}),  # New graph for traffic volume reduction
@@ -39,9 +46,30 @@ app.layout = html.Div([
     dcc.Interval(
         id="interval-component",
         interval=1000,  # 1000ms = 1 second
-        n_intervals=0
+        n_intervals=0,
+        disabled = False
     ),
 ])
+
+@app.callback(
+    [Output('episode-dropdown', 'options'),
+    Output('episode-details', 'children'),  # Adds an alert to the HTML page if no episodes are available
+    Output('interval-component', "disabled")],
+    Input('interval-component', 'n_intervals')
+)
+def update_dropdown_options(n_intervals):
+    """Dynamically update the dropdown options based on the episodes."""
+    if not model.episode_history:
+        # Instead of printing, display the message in the 'episode-details' area
+        return [], html.Div("No episodes available yet. The simulation might still be running.", 
+                            style={'color': 'red', 'fontSize': 18, 'textAlign': 'center'})
+
+    dropdown_options = [{'label': f"Episode {ep_id}", 'value': ep_id} for ep_id in model.episode_history.keys()]
+    # Provide a neutral message when options are available
+    return dropdown_options, html.Div("Select an episode to view its stats from the dropdown.", 
+                                    style={'color': 'blue', 'fontSize': 18, 'textAlign': 'center'})
+
+
 
 @app.callback(
     [Output("metric-plot", "figure"), 
@@ -62,66 +90,44 @@ def update_plots(n_intervals):
 
     # Create the plots
     cumulative_plot = go.Figure(
-        data=[
-            go.Scatter(
-                x=episode_numbers,
-                y=data["co2_emissions_over_time"],
-                mode="lines+markers",
-                name="Cumulative CO2 Emissions",
-            )
-        ],
+        data=[go.Scatter(x=episode_numbers, y=data["co2_emissions_over_time"], mode="lines+markers", name="Cumulative CO2 Emissions")],
         layout=go.Layout(
             title="Cumulative CO2 Emissions Over Episodes",
             xaxis=dict(title="Episodes"),
             yaxis=dict(title="CO2 Emissions (g)"),
-        ),
+        )
     )
-
     episode_plot = go.Figure(
-        data=[
-            go.Bar(
-                x=episode_numbers,
-                y=data["co2_emissions_per_episode"],
-                name="CO2 Emissions Per Episode",
-            )
-        ],
+        data=[go.Bar(x=episode_numbers, y=data["co2_emissions_per_episode"], name="CO2 Emissions Per Episode")],
         layout=go.Layout(
             title="CO2 Emissions Per Episode",
             xaxis=dict(title="Episodes"),
             yaxis=dict(title="CO2 Emissions (g)"),
-        ),
+        )
     )
 
+
 # Traffic Volume Reduction Plot
-    if "traffic_volume_per_episode" not in data or not data["traffic_volume_per_episode"]:
+    if "traffic_volume_per_episode" in data and data["traffic_volume_per_episode"]:
+        traffic_volume_initial = data["traffic_volume_per_episode"][0]
+        traffic_volume_reduction = [
+            (traffic_volume_initial - tv) / traffic_volume_initial * 100 for tv in data["traffic_volume_per_episode"]
+        ]
+        traffic_volume_plot = go.Figure(
+            data=[go.Scatter(x=episode_numbers, y=traffic_volume_reduction, mode="lines+markers", name="Traffic Volume Reduction (%)")],
+            layout=go.Layout(
+                title="Traffic Volume Reduction Over Episodes",
+                xaxis=dict(title="Episodes"),
+                yaxis=dict(title="Reduction Percentage (%)"),
+            )
+        )
+    else:
         traffic_volume_plot = go.Figure(
             layout=go.Layout(
                 title="Traffic Volume Reduction Over Episodes (No Data)",
                 xaxis=dict(title="Episodes"),
                 yaxis=dict(title="Reduction Percentage (%)"),
             )
-        )
-    else:
-        traffic_volume_initial = data["traffic_volume_per_episode"][0]
-        traffic_volume_reduction = [
-            (traffic_volume_initial - tv) / traffic_volume_initial * 100
-            for tv in data["traffic_volume_per_episode"]
-        ]
-
-        traffic_volume_plot = go.Figure(
-            data=[
-                go.Scatter(
-                    x=episode_numbers,
-                    y=traffic_volume_reduction,
-                    mode="lines+markers",
-                    name="Traffic Volume Reduction (%)",
-                )
-            ],
-            layout=go.Layout(
-                title="Traffic Volume Reduction Over Episodes",
-                xaxis=dict(title="Episodes"),
-                yaxis=dict(title="Reduction Percentage (%)"),
-            ),
         )
 
 
@@ -135,36 +141,21 @@ def update_plots(n_intervals):
 
     #plots
     if model.simulation_finished:
-        # Fetch agent credits at the end of the simulation
         agent_credits = model.get_agent_credits()
-        agent_ids = list(agent_credits.keys())
-        credits = list(agent_credits.values())
-
-        # Create a plot for agent credits
         credits_plot = go.Figure(
-            data=[go.Bar(
-                x=agent_ids,
-                y=credits,
-                name="Agent Credits"
-            )],
+            data=[go.Bar(x=list(agent_credits.keys()), y=list(agent_credits.values()), name="Agent Credits")],
             layout=go.Layout(
                 title="Agent Credits",
                 xaxis=dict(title="Agent IDs"),
-                yaxis=dict(title="Credits")
+                yaxis=dict(title="Credits"),
             )
         )
     else:
-        # Show a placeholder plot if the simulation is not finished
         credits_plot = go.Figure(
-            data=[go.Bar(
-                x=[],
-                y=[],
-                name="Agent Credits"
-            )],
             layout=go.Layout(
-                title="Agent Credits",
+                title="Agent Credits (Simulation Running)",
                 xaxis=dict(title="Agent IDs"),
-                yaxis=dict(title="Credits")
+                yaxis=dict(title="Credits"),
             )
         )
     return cumulative_plot, episode_plot, traffic_volume_plot, credits_plot
