@@ -17,9 +17,19 @@ from simulation import TrafficModel
 nodes_and_edges_folder = "nodes_and_edges"
 combined_nodes_file = os.path.join(nodes_and_edges_folder, "all_routes_combined_nodes.csv")
 combined_edges_file = os.path.join(nodes_and_edges_folder, "all_routes_combined_edges.csv")
-num_agents = 1000
-step_time_dimension = 60.0   # s/step aka the "resolution" of the simulation
+num_agents = 100
+step_time_dimension = 10.0   # s/step aka the "resolution" of the simulation
 episodes = 60
+
+# Initialize the model
+model = TrafficModel(
+    nodes_and_edges_folder,
+    num_agents,  
+    step_time_dimension, 
+    episodes,
+    combined_nodes_file=combined_nodes_file,
+    combined_edges_file=combined_edges_file
+)
 
 # # Global list to track CO2 emissions over time
 # co2_emissions_over_time = []  # Running total of CO2 emissions
@@ -32,96 +42,125 @@ app.title = "AMC Simulation Dashboard"
 app.layout = html.Div([
     html.H1("AMC Simulation Dashboard"),
     dcc.Dropdown(
-            id='episode-dropdown',
-            placeholder="Select an Episode",
-            style={'width': '50%'}
+        id='episode-dropdown',
+        options=[{'label': f"Episode {ep_id}", 'value': ep_id} for ep_id in model.episode_history.keys()],
+        placeholder="Select an Episode",
+        style={'width': '50%'}
     ),
-    html.Div(id='episode-details', style={'marginTop': '20px'}),
-    
+    html.Div(id='episode-details', style={'marginTop': '20px'}),  # Mode Distribution Display
+
+    dcc.Dropdown(
+        id='agent-dropdown',
+        placeholder="Select an Agent",
+        style={'width': '50%', 'marginTop': '20px'}
+    ),
+    html.Div(id='agent-details', style={'marginTop': '20px'}),  # Agent Details Display
+
     dcc.Graph(id="metric-plot", style={"width": "100%", "height": "400px"}),
     dcc.Graph(id="episode-plot", style={"width": "100%", "height": "400px"}),
-    dcc.Graph(id="traffic-volume-reduction-plot", style={"width": "100%", "height": "400px"}),  # New graph for traffic volume reduction
-    
-    dcc.Graph(id="credits-plot", style={"width": "100%", "height": "400px"}),  # New graph for credits
+    dcc.Graph(id="traffic-volume-reduction-plot", style={"width": "100%", "height": "400px"}),
+    dcc.Graph(id="credits-plot", style={"width": "100%", "height": "400px"}),
     dcc.Interval(
         id="interval-component",
-        interval=1000,  # 1000ms = 1 second
+        interval=1000,
         n_intervals=0,
-        disabled = False
+        disabled=model.simulation_finished
     ),
 ])
 
 @app.callback(
-    [Output('episode-dropdown', 'options'),
-    Output('episode-details', 'children'),  # Adds an alert to the HTML page if no episodes are available
-    Output('interval-component', "disabled")],
+    Output('episode-details', 'children'),
+    Input('episode-dropdown', 'value')
+)
+def display_episode_details(selected_episode):
+    if selected_episode is None:
+        return html.Div("Select an episode to see its mode distribution.",
+                        style={'color': 'blue', 'fontSize': 16, 'textAlign': 'center'})
+
+    episode_data = model.episode_history.get(selected_episode, {})
+    mode_distribution = episode_data.get("mode_distribution", {})
+
+    mode_summary = [
+        html.P(f"{mode}: {count}") for mode, count in mode_distribution.items()
+    ]
+    return html.Div(mode_summary, style={'textAlign': 'left', 'margin': '10px'})
+
+@app.callback(
+    Output('episode-dropdown', 'options'),
     Input('interval-component', 'n_intervals')
 )
 def update_dropdown_options(n_intervals):
-    """Dynamically update the dropdown options based on the episodes."""
-    if not model.episode_history:
-        # Instead of printing, display the message in the 'episode-details' area
-        return [], html.Div("No episodes available yet. The simulation might still be running.", 
-                            style={'color': 'red', 'fontSize': 18, 'textAlign': 'center'})
+    if not model.simulation_finished:
+        return []
 
+    # Dynamically populate dropdown options
     dropdown_options = [{'label': f"Episode {ep_id}", 'value': ep_id} for ep_id in model.episode_history.keys()]
-    # Provide a neutral message when options are available
-    return dropdown_options, html.Div("Select an episode to view its stats from the dropdown.", 
-                                    style={'color': 'blue', 'fontSize': 18, 'textAlign': 'center'})
+    print("Dropdown Options Updated:", dropdown_options)  # Debugging
+    return dropdown_options
 
+@app.callback(
+    Output('agent-dropdown', 'options'),
+    Input('episode-dropdown', 'value')
+)
+def update_agent_dropdown(selected_episode):
+    if selected_episode is None:
+        return []
+
+    episode_data = model.episode_history.get(selected_episode, {})
+    agent_options = [{'label': f"Agent {agent_id}", 'value': agent_id} for agent_id in episode_data.get("agents", {}).keys()]
+    return agent_options
+
+@app.callback(
+    Output('agent-details', 'children'),
+    Input('agent-dropdown', 'value'),
+    State('episode-dropdown', 'value')
+)
+def display_agent_details(selected_agent, selected_episode):
+    if selected_agent is None or selected_episode is None:
+        return html.Div("Select an episode and an agent to view details.")
+
+    episode_data = model.episode_history.get(selected_episode, {})
+    agent_data = episode_data["agents"].get(selected_agent, {})
+
+    agent_summary = [
+        html.P(f"{key}: {value}") for key, value in agent_data.items()
+    ]
+    return html.Div(agent_summary, style={'textAlign': 'left', 'margin': '10px'})
 
 
 @app.callback(
-    [Output("metric-plot", "figure"), 
-    Output("episode-plot", "figure"), 
-    Output("traffic-volume-reduction-plot", "figure"),  # Include the traffic volume reduction plot
-
-    Output("credits-plot", "figure")],  # Include the credits plot
+    [Output("metric-plot", "figure"),
+     Output("episode-plot", "figure"),
+     Output("traffic-volume-reduction-plot", "figure"),
+     Output("credits-plot", "figure"),
+     Output("interval-component", "disabled")],  # Stop interval when simulation is done
     [Input("interval-component", "n_intervals")]
 )
 def update_plots(n_intervals):
-    # Retrieve simulation data for plots
-    # data = model.get_filtered_episode_data()
-    data = model.get_unfiltered_episode_data()
+    if model.simulation_finished:
+        print(f"Update Plots Called: Simulation Finished = {model.simulation_finished}")
+        data = model.get_unfiltered_episode_data()
+        # print("Data Retrieved for Plots:", data)  # Debugging
+        episode_numbers = list(range(len(data["co2_emissions_per_episode"])))
 
-
-    # Prepare episode indices
-    episode_numbers = list(range(len(data["co2_emissions_per_episode"])))
-
-    # Create the plots
-    cumulative_plot = go.Figure(
-        data=[go.Scatter(x=episode_numbers, y=data["co2_emissions_over_time"], mode="lines+markers", name="Cumulative CO2 Emissions")],
-        layout=go.Layout(
-            title="Cumulative CO2 Emissions Over Episodes",
-            xaxis=dict(title="Episodes"),
-            yaxis=dict(title="CO2 Emissions (g)"),
-        )
-    )
-    episode_plot = go.Figure(
-        data=[go.Bar(x=episode_numbers, y=data["co2_emissions_per_episode"], name="CO2 Emissions Per Episode")],
-        layout=go.Layout(
-            title="CO2 Emissions Per Episode",
-            xaxis=dict(title="Episodes"),
-            yaxis=dict(title="CO2 Emissions (g)"),
-        )
-    )
-
-
-# Traffic Volume Reduction Plot
-    if "traffic_volume_per_episode" in data and data["traffic_volume_per_episode"]:
-        traffic_volume_initial = data["traffic_volume_per_episode"][0]
-        traffic_volume_reduction = [
-            (traffic_volume_initial - tv) / traffic_volume_initial * 100 for tv in data["traffic_volume_per_episode"]
-        ]
-        traffic_volume_plot = go.Figure(
-            data=[go.Scatter(x=episode_numbers, y=traffic_volume_reduction, mode="lines+markers", name="Traffic Volume Reduction (%)")],
+        cumulative_plot = go.Figure(
+            data=[go.Scatter(x=episode_numbers, y=data["co2_emissions_over_time"], mode="lines+markers", name="Cumulative CO2 Emissions")],
             layout=go.Layout(
-                title="Traffic Volume Reduction Over Episodes",
+                title="Cumulative CO2 Emissions Over Episodes",
                 xaxis=dict(title="Episodes"),
-                yaxis=dict(title="Reduction Percentage (%)"),
+                yaxis=dict(title="CO2 Emissions (g)"),
             )
         )
-    else:
+
+        episode_plot = go.Figure(
+            data=[go.Bar(x=episode_numbers, y=data["co2_emissions_per_episode"], name="CO2 Emissions Per Episode")],
+            layout=go.Layout(
+                title="CO2 Emissions Per Episode",
+                xaxis=dict(title="Episodes"),
+                yaxis=dict(title="CO2 Emissions (g)"),
+            )
+        )
+
         traffic_volume_plot = go.Figure(
             layout=go.Layout(
                 title="Traffic Volume Reduction Over Episodes (No Data)",
@@ -129,6 +168,34 @@ def update_plots(n_intervals):
                 yaxis=dict(title="Reduction Percentage (%)"),
             )
         )
+        if "traffic_volume_per_episode" in data and data["traffic_volume_per_episode"]:
+            traffic_volume_initial = data["traffic_volume_per_episode"][0]
+            traffic_volume_reduction = [
+                (traffic_volume_initial - tv) / traffic_volume_initial * 100 for tv in data["traffic_volume_per_episode"]
+            ]
+            traffic_volume_plot = go.Figure(
+                data=[go.Scatter(x=episode_numbers, y=traffic_volume_reduction, mode="lines+markers", name="Traffic Volume Reduction (%)")],
+                layout=go.Layout(
+                    title="Traffic Volume Reduction Over Episodes",
+                    xaxis=dict(title="Episodes"),
+                    yaxis=dict(title="Reduction Percentage (%)"),
+                )
+            )
+
+        credits_plot = go.Figure(
+            data=[go.Bar(x=list(model.get_agent_credits().keys()), y=list(model.get_agent_credits().values()), name="Agent Credits")],
+            layout=go.Layout(
+                title="Agent Credits",
+                xaxis=dict(title="Agent IDs"),
+                yaxis=dict(title="Credits"),
+            )
+        )
+
+        return cumulative_plot, episode_plot, traffic_volume_plot, credits_plot, True  # Disable interval updates
+    else:
+        # Continue with normal updates
+        return dash.no_update, dash.no_update, dash.no_update, dash.no_update, False
+
 
 
     #CREDITS SCHEME
@@ -140,37 +207,28 @@ def update_plots(n_intervals):
     #    print(f"Agent {agent_id}: {credit} credits")
 
     #plots
-    if model.simulation_finished:
-        agent_credits = model.get_agent_credits()
-        credits_plot = go.Figure(
-            data=[go.Bar(x=list(agent_credits.keys()), y=list(agent_credits.values()), name="Agent Credits")],
-            layout=go.Layout(
-                title="Agent Credits",
-                xaxis=dict(title="Agent IDs"),
-                yaxis=dict(title="Credits"),
-            )
-        )
-    else:
-        credits_plot = go.Figure(
-            layout=go.Layout(
-                title="Agent Credits (Simulation Running)",
-                xaxis=dict(title="Agent IDs"),
-                yaxis=dict(title="Credits"),
-            )
-        )
-    return cumulative_plot, episode_plot, traffic_volume_plot, credits_plot
+    # if model.simulation_finished:
+    #     agent_credits = model.get_agent_credits()
+    #     credits_plot = go.Figure(
+    #         data=[go.Bar(x=list(agent_credits.keys()), y=list(agent_credits.values()), name="Agent Credits")],
+    #         layout=go.Layout(
+    #             title="Agent Credits",
+    #             xaxis=dict(title="Agent IDs"),
+    #             yaxis=dict(title="Credits"),
+    #         )
+    #     )
+    # else:
+    #     credits_plot = go.Figure(
+    #         layout=go.Layout(
+    #             title="Agent Credits (Simulation Running)",
+    #             xaxis=dict(title="Agent IDs"),
+    #             yaxis=dict(title="Credits"),
+    #         )
+    #     )
+    # return cumulative_plot, episode_plot, traffic_volume_plot, credits_plot
 
 if __name__ == "__main__":
-    # Initialize the model
-    model = TrafficModel(
-        nodes_and_edges_folder,
-        num_agents,  
-        step_time_dimension, 
-        episodes,
-        combined_nodes_file=combined_nodes_file,
-        combined_edges_file=combined_edges_file
-    )
-    
+   
     while not model.simulation_finished:
         model.step()
     app.run_server(debug=False)

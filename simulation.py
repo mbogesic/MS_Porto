@@ -188,6 +188,7 @@ class TrafficModel(Model):
         self.episode_summary = {
             "agents": {
                 agent.unique_id: {
+                    "route": [],
                     "emissions": 0,
                     "rewards": 0,
                     "actions": [],
@@ -236,6 +237,7 @@ class TrafficModel(Model):
         self.episode_summary = {
             "agents": {
                 agent.unique_id: {
+                    "route": [],
                     "emissions": 0,
                     "rewards": 0,
                     "actions": [],
@@ -255,6 +257,7 @@ class TrafficModel(Model):
         # Reduce human factor across all agents to simulate adaptability
         for agent in self.custom_agents:
             start_distribution[agent.last_action] += 1
+            self.episode_summary["agents"][agent.unique_id]["route"] = agent.route_name
             agent.human_factor *= 0.85  # Agents adapt over time
 
         total_agents = len(self.custom_agents)
@@ -268,6 +271,7 @@ class TrafficModel(Model):
         
         # Store the start distribution for analysis
         self.mode_distributions.append(start_distribution)
+        self.episode_summary["mode_distribution"] = start_distribution
         
         # Dynamically adjust rewards during warmup
         if self.current_episode < 30:
