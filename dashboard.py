@@ -58,7 +58,9 @@ app.layout = html.Div([
 
     dcc.Graph(id="metric-plot", style={"width": "100%", "height": "400px"}),
     dcc.Graph(id="episode-plot", style={"width": "100%", "height": "400px"}),
-    dcc.Graph(id="traffic-volume-reduction-plot", style={"width": "100%", "height": "400px"}),
+    dcc.Graph(id="mode-distribution-plot", style={"width": "100%", "height": "400px"}),
+    # dcc.Graph(id="traffic-volume-reduction-plot", style={"width": "100%", "height": "400px"}),
+    dcc.Graph(id="cumulative-credits-plot", style={"width": "100%", "height": "400px"}),
     dcc.Graph(id="credits-plot", style={"width": "100%", "height": "400px"}),
     dcc.Interval(
         id="interval-component",
@@ -93,8 +95,14 @@ def update_dropdown_options(n_intervals):
     if not model.simulation_finished:
         return []
 
-    # Dynamically populate dropdown options
-    dropdown_options = [{'label': f"Episode {ep_id}", 'value': ep_id} for ep_id in model.episode_history.keys()]
+    # Dynamically populate dropdown options with "WARMUP" for episodes below 30
+    dropdown_options = [
+        {
+            'label': f"Episode {ep_id} {'(WARMUP)' if ep_id < 30 else ''}",
+            'value': ep_id
+        }
+        for ep_id in model.episode_history.keys()
+    ]
     print("Dropdown Options Updated:", dropdown_options)  # Debugging
     return dropdown_options
 
@@ -131,7 +139,9 @@ def display_agent_details(selected_agent, selected_episode):
 @app.callback(
     [Output("metric-plot", "figure"),
      Output("episode-plot", "figure"),
-     Output("traffic-volume-reduction-plot", "figure"),
+     Output("mode-distribution-plot", "figure"),
+    #  Output("traffic-volume-reduction-plot", "figure"),
+     Output("cumulative-credits-plot", "figure"),
      Output("credits-plot", "figure"),
      Output("interval-component", "disabled")],  # Stop interval when simulation is done
     [Input("interval-component", "n_intervals")]
@@ -140,9 +150,24 @@ def update_plots(n_intervals):
     if model.simulation_finished:
         print(f"Update Plots Called: Simulation Finished = {model.simulation_finished}")
         data = model.get_unfiltered_episode_data()
+        # data = model.get_filtered_episode_data()
         # print("Data Retrieved for Plots:", data)  # Debugging
-        episode_numbers = list(range(len(data["co2_emissions_per_episode"])))
+        # Adjust episode numbers to start at 30
+        start_episode = 30
+        if len(data["co2_emissions_per_episode"]) > 30:
+            episode_numbers = list(range(len(data["co2_emissions_per_episode"])))
+        else:
+            episode_numbers = list(range(start_episode, start_episode + len(data["co2_emissions_per_episode"])))
 
+        # Define bar colors: "lightgrey" for episodes < 30, "blue" for others
+        bar_colors = ["lightgrey" if ep < 30 else "blue" for ep in episode_numbers]
+
+        # Cumulative CO2 Plot
+        cumulative_co2 = data["co2_emissions_per_episode"]
+        mean_co2 = [sum(cumulative_co2[:i+1]) / (i+1) for i in range(len(cumulative_co2))]
+        overall_mean_co2 = sum(cumulative_co2) / len(cumulative_co2) if cumulative_co2 else 0
+        mean_co2_per_episode = [overall_mean_co2] * len(cumulative_co2)
+        
         cumulative_plot = go.Figure(
             data=[go.Scatter(x=episode_numbers, y=data["co2_emissions_over_time"], mode="lines+markers", name="Cumulative CO2 Emissions")],
             layout=go.Layout(
@@ -153,7 +178,8 @@ def update_plots(n_intervals):
         )
 
         episode_plot = go.Figure(
-            data=[go.Bar(x=episode_numbers, y=data["co2_emissions_per_episode"], name="CO2 Emissions Per Episode")],
+            data=[go.Bar(x=episode_numbers, y=data["co2_emissions_per_episode"], marker_color=bar_colors, name="CO2 Emissions Per Episode"),
+                    go.Scatter(x=list(range(len(mean_co2))), y=mean_co2_per_episode, mode="lines", name="Mean CO2")],
             layout=go.Layout(
                 title="CO2 Emissions Per Episode",
                 xaxis=dict(title="Episodes"),
@@ -161,28 +187,84 @@ def update_plots(n_intervals):
             )
         )
 
-        traffic_volume_plot = go.Figure(
+        # Mode Distribution Plot
+        mode_distributions = [
+            model.episode_history[ep]["mode_distribution"] for ep in model.episode_history.keys()
+        ]
+        modes = list(mode_distributions[0].keys())
+        layers = {
+            mode: [distribution.get(mode, 0) for distribution in mode_distributions] for mode in modes
+        }
+
+        # Define color sets for saturation adjustment
+        color_palette = {
+            "Bike": "rgba(0, 128, 0, 1)",  # Green
+            "PublicTransport": "rgba(0, 0, 255, 1)",  # Blue
+            "Car": "rgba(255, 0, 0, 1)",  # Red
+        }
+        faded_palette = {
+            "Bike": "rgba(0, 128, 0, 0.3)",  # Faded Green
+            "PublicTransport": "rgba(0, 0, 255, 0.3)",  # Faded Blue
+            "Car": "rgba(255, 0, 0, 0.3)",  # Faded Red
+        }
+
+        mode_plot = go.Figure(
+            data=[
+                go.Bar(
+                    name=mode,
+                    x=list(range(len(mode_distributions))),
+                    y=counts,
+                    marker_color=[
+                        faded_palette[mode] if ep < 30 else color_palette[mode] for ep in range(len(mode_distributions))
+                    ]
+                ) for mode, counts in layers.items()
+            ],
             layout=go.Layout(
-                title="Traffic Volume Reduction Over Episodes (No Data)",
+                title="Mode Distribution Per Episode",
+                barmode="stack",
                 xaxis=dict(title="Episodes"),
-                yaxis=dict(title="Reduction Percentage (%)"),
+                yaxis=dict(title="Count"),
             )
         )
-        if "traffic_volume_per_episode" in data and data["traffic_volume_per_episode"]:
-            traffic_volume_initial = data["traffic_volume_per_episode"][0]
-            traffic_volume_reduction = [
-                (traffic_volume_initial - tv) / traffic_volume_initial * 100 for tv in data["traffic_volume_per_episode"]
-            ]
-            traffic_volume_plot = go.Figure(
-                data=[go.Scatter(x=episode_numbers, y=traffic_volume_reduction, mode="lines+markers", name="Traffic Volume Reduction (%)")],
-                layout=go.Layout(
-                    title="Traffic Volume Reduction Over Episodes",
-                    xaxis=dict(title="Episodes"),
-                    yaxis=dict(title="Reduction Percentage (%)"),
-                )
-            )
+        
+        # traffic_volume_plot = go.Figure(
+        #     layout=go.Layout(
+        #         title="Traffic Volume Reduction Over Episodes (No Data)",
+        #         xaxis=dict(title="Episodes"),
+        #         yaxis=dict(title="Reduction Percentage (%)"),
+        #     )
+        # )
+        # if "traffic_volume_per_episode" in data and data["traffic_volume_per_episode"]:
+        #     traffic_volume_initial = data["traffic_volume_per_episode"][0]
+        #     traffic_volume_reduction = [
+        #         (traffic_volume_initial - tv) / traffic_volume_initial * 100 for tv in data["traffic_volume_per_episode"]
+        #     ]
+        #     traffic_volume_plot = go.Figure(
+        #         data=[go.Scatter(x=episode_numbers, y=traffic_volume_reduction, mode="lines+markers", name="Traffic Volume Reduction (%)")],
+        #         layout=go.Layout(
+        #             title="Traffic Volume Reduction Over Episodes",
+        #             xaxis=dict(title="Episodes"),
+        #             yaxis=dict(title="Reduction Percentage (%)"),
+        #         )
+        #     )
+        
+        # Cumulative Credits Plot
+        credits_per_episode = []
+        for episode_id in range(len(model.episode_history)):
+            episode_credits = sum(agent_data['credits'] for agent_data in model.episode_history[episode_id]['agents'].values())
+            credits_per_episode.append(episode_credits)
 
         credits_plot = go.Figure(
+            data=[go.Bar(x=list(range(len(credits_per_episode))), y=credits_per_episode, marker_color=bar_colors, name="Credits Per Episode")],
+            layout=go.Layout(
+                title="Cumulative Credits Per Episode",
+                xaxis=dict(title="Episodes"),
+                yaxis=dict(title="Total Credits"),
+            )
+        )
+
+
+        agents_plot = go.Figure(
             data=[go.Bar(x=list(model.get_agent_credits().keys()), y=list(model.get_agent_credits().values()), name="Agent Credits")],
             layout=go.Layout(
                 title="Agent Credits",
@@ -191,10 +273,10 @@ def update_plots(n_intervals):
             )
         )
 
-        return cumulative_plot, episode_plot, traffic_volume_plot, credits_plot, True  # Disable interval updates
+        return cumulative_plot, episode_plot, mode_plot, credits_plot, agents_plot, True  # Disable interval updates
     else:
         # Continue with normal updates
-        return dash.no_update, dash.no_update, dash.no_update, dash.no_update, False
+        return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, False
 
 
 

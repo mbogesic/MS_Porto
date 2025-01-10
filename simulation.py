@@ -147,7 +147,8 @@ class TrafficModel(Model):
             "PublicTransport": 0.384,  # g/s (based on 97 g/km at ~14.25 km/h)
         }
         self.mode_distributions = []
-
+        self.initial_distribution = {"Bike": 0, "PublicTransport": 0, "Car": 0}
+        
         self.total_co2_emissions = 0  # Cumulative CO2 emissions across all episodes
         self.co2_emissions_over_time = []
         self.co2_emissions_per_episode = []  # CO2 emissions per episode
@@ -228,11 +229,10 @@ class TrafficModel(Model):
     def reset_environment(self):
         """Reset the simulation environment while retaining Q-table."""
         if self.current_episode == 30:
+            print("Transitioning to Episode 30 with the initial state from Episode 0.")
             self.total_co2_emissions = 0
-            self.co2_emissions_over_time = []
-            self.co2_emissions_per_episode = []
             print("Transitioning from warmup to individual Q-tables.")
-                       
+
         # Reset the episode summary
         self.episode_summary = {
             "agents": {
@@ -251,12 +251,33 @@ class TrafficModel(Model):
         self.simulation_finished = False
         self.step_count = 0
         self.current_episode_emissions = 0
+
         # Count mode distribution at the start of the episode
         start_distribution = {"Bike": 0, "PublicTransport": 0, "Car": 0}
-        
-        # Reduce human factor across all agents to simulate adaptability
+
         for agent in self.custom_agents:
+            if self.current_episode == 30:
+                # Reproduce state from snapshot
+                snapshot = self.initial_state_snapshot[agent.unique_id]
+                agent.last_action = snapshot["mode"]
+                agent.time_pressure = snapshot["state"]["time_pressure"]
+                agent.motivation = snapshot["state"]["motivation"]
+                agent.traffic = snapshot["state"]["traffic"]
+            else:
+                # Randomize state for new episodes
+                agent.set_state()
+
             start_distribution[agent.last_action] += 1
+
+            # Save the initial state of agents in Episode 0
+            if self.current_episode == 0:
+                if not hasattr(self, "initial_state_snapshot"):
+                    self.initial_state_snapshot = {}
+                self.initial_state_snapshot[agent.unique_id] = {
+                    "state": agent.get_state(),
+                    "mode": agent.last_action
+                }
+
             self.episode_summary["agents"][agent.unique_id]["route"] = agent.route_name
             agent.human_factor *= 0.85  # Agents adapt over time
 
@@ -268,63 +289,51 @@ class TrafficModel(Model):
             for agent in self.custom_agents:
                 if agent.last_action == "Bike":
                     agent.credits += 5  # Extra reward for biking
-        
+
         # Store the start distribution for analysis
         self.mode_distributions.append(start_distribution)
         self.episode_summary["mode_distribution"] = start_distribution
-        
+
+        if self.current_episode == 0:
+            self.initial_distribution = start_distribution
+
         # Dynamically adjust rewards during warmup
         if self.current_episode < 30:
             current_distribution = self.mode_distributions[-1] if self.mode_distributions else {"Bike": 0, "PublicTransport": 0, "Car": 0}
             # Adjust reward multipliers based on current distribution
-            if current_distribution["Bike"] > 0.5 * self.num_agents:
-                self.bike_reward_multiplier = 0.8  # Reduce biking rewards
-            else:
-                self.bike_reward_multiplier = 1.0
-
-            if current_distribution["PublicTransport"] < 0.3 * self.num_agents:
-                self.public_transport_reward_multiplier = 1.2  # Boost public transport rewards
-            else:
-                self.public_transport_reward_multiplier = 1.0
+            self.bike_reward_multiplier = 0.8 if current_distribution["Bike"] > 0.5 * self.num_agents else 1.0
+            self.public_transport_reward_multiplier = 1.2 if current_distribution["PublicTransport"] < 0.3 * self.num_agents else 1.0
         else:
             # Reset reward multipliers after warmup
             self.bike_reward_multiplier = 1.0
             self.public_transport_reward_multiplier = 1.0
-                
+
         print(f"+++ Episode {self.current_episode} Started +++")
-        #self.current_weather = random.choice(self.weather_conditions)
-        #print(f"weather: {self.current_weather}")
         print(f"Mode Distribution: {start_distribution}")
-        # self.initialize_weather()
 
         # Reset agents for the new episode
         for agent in self.custom_agents:
-            # Compute Q-learning updates for agents
             current_state = agent.get_state()
             action = agent.last_action
-            next_state = agent.get_state()
+            next_state = current_state  # Use current state for consistency
             reward = self.compute_reward(agent)
 
             # Update Q-values
             agent.update_q_value(current_state, action, reward, next_state)
-            
-            # if self.current_weather == "rain" or self.current_weather == "extreme_heat":
-            #     agent.speed *= 0.8  # Slow down motorized transport
-                
             agent.reset_for_new_episode()
-        
-        # # After loading routes
-        # print(f"Main graph has {len(self.graph.nodes)} nodes and {len(self.graph.edges)} edges.")
-        # print(f"Routes loaded: {len(self.routes)}")
-        # print(f"First few nodes: {list(self.graph.nodes)[:5]}")
-        # # Print the extracted route lengths
-        # for route_name, length in self.route_lengths.items():
-        #     print(f"Route: {route_name}, Total Length: {length:.2f} meters")
             
-        # for route_graph in self.routes:
-        #     for node in route_graph.nodes:
-        #         if node not in self.graph.nodes:
-        #             print(f"Node {node} from subgraph not in main graph!")
+            # # After loading routes
+            # print(f"Main graph has {len(self.graph.nodes)} nodes and {len(self.graph.edges)} edges.")
+            # print(f"Routes loaded: {len(self.routes)}")
+            # print(f"First few nodes: {list(self.graph.nodes)[:5]}")
+            # # Print the extracted route lengths
+            # for route_name, length in self.route_lengths.items():
+            #     print(f"Route: {route_name}, Total Length: {length:.2f} meters")
+                
+            # for route_graph in self.routes:
+            #     for node in route_graph.nodes:
+            #         if node not in self.graph.nodes:
+            #             print(f"Node {node} from subgraph not in main graph!")
         
     def agent_completed(self, agent_id):
         """
@@ -891,6 +900,10 @@ class TrafficAgent:
         # Extract initial transport mode from route name
         self.last_action = self.get_mode_from_route(route_name)
         
+        # states
+        self.time_pressure = ""
+        self.motivation = ""
+        self.traffic = ""
 
         self.current_traffic_volume = 0  # Tracks the agent's contribution to traffic volume
 
@@ -994,18 +1007,22 @@ class TrafficAgent:
 
     def get_state(self):
         """
-        Define the state of the agent based on current mode and external factors.
+        Get the state of the agent based on current mode and external factors.
         """
-        time_pressure = random.choice(["early", "on-time", "late"])
-        motivation = random.choice(["lazy", "neutral", "motivated"])
-        traffic = "high" if self.model.grid.get_edge_congestion(self.current_node, self.end_node) > 10 else "low"
-        
         return {
             "current_mode": self.last_action,
-            "time_pressure": time_pressure,
-            "motivation": motivation,
-            "traffic": traffic
+            "time_pressure": self.time_pressure,
+            "motivation": self.motivation,
+            "traffic": self.traffic
         }
+    
+    def set_state(self):
+        """
+        Define and set the state of the agent based on current mode and external factors.
+        """
+        self.time_pressure = random.choice(["early", "on-time", "late"])
+        self.motivation = random.choice(["lazy", "neutral", "motivated"])
+        self.traffic = random.choice(["low", "high"])
     
     def get_possible_actions(self):
         """Define possible actions (mocked for simplicity)."""
