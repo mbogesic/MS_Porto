@@ -280,6 +280,8 @@ class TrafficModel(Model):
                     "mode": agent.last_action
                 }
 
+            self.update_route_based_on_mode_and_direction(agent, agent.last_action)
+            
             self.episode_summary["agents"][agent.unique_id]["route"] = agent.route_name
             agent.human_factor *= 0.998  # Agents adapt over time
 
@@ -677,7 +679,7 @@ class TrafficModel(Model):
         
         # Dynamic reward based on emissions
         emission_factor = 1.0 - (self.current_episode_emissions / max(self.total_co2_emissions, 1))
-        public_transport_bonus = 1.2 * emission_factor  # Extra reward for low emissions
+        public_transport_bonus = 2 * emission_factor  # Extra reward for low emissions
 
         # Streak multiplier for biking
         streak_multiplier = 1 + (agent.biking_streak * 0.05)  # 10% increase per streak
@@ -712,7 +714,7 @@ class TrafficModel(Model):
         elif action == "Car":
             return reward - co2_penalty # No bonus for cars
         else:
-            return reward  # Default reward
+            return base_rewards.get(agent.last_action, 0)  # Default reward
 
     def get_agent_credits(self): #CREDIT SCHEME
             """
@@ -722,32 +724,32 @@ class TrafficModel(Model):
             """
             return {agent.unique_id: agent.credits for agent in self.schedule.agents}
 
-    # def update_route_based_on_mode_and_direction(self, agent, selected_mode):
-    #     """
-    #     Update the route and graph based on the selected transport mode and direction (CA -> A or A -> CA).
+    def update_route_based_on_mode_and_direction(self, agent, selected_mode):
+        """
+        Update the route and graph based on the selected transport mode and direction (CA -> A or A -> CA).
         
-    #     Parameters:
-    #         agent: The traffic agent to update.
-    #         selected_mode: The selected mode of transport (e.g., "Bike", "Car", "PublicTransport").
-    #     """
-    #     # Define a map for modes and routes, considering both directions
-    #     route_map = {
-    #         ("Asprela", "Campo Alegre", "Bike"): "Asprela_2_Campo_Alegre_Bike",
-    #         ("Asprela", "Campo Alegre", "PublicTransport"): "Asprela_2_Campo_Alegre_PublicTransport",
-    #         ("Asprela", "Campo Alegre", "Car"): "Asprela_2_Campo_Alegre_Car",
-    #         ("Campo Alegre", "Asprela", "Bike"): "Campo_Alegre_2_Asprela_Bike",
-    #         ("Campo Alegre", "Asprela", "PublicTransport"): "Campo_Alegre_2_Asprela_PublicTransport",
-    #         ("Campo Alegre", "Asprela", "Car"): "Campo_Alegre_2_Asprela_Car",
-    #     }
+        Parameters:
+            agent: The traffic agent to update.
+            selected_mode: The selected mode of transport (e.g., "Bike", "Car", "PublicTransport").
+        """
+        # Define a map for modes and routes, considering both directions
+        route_map = {
+            ("Asprela", "Campo Alegre", "Bike"): "Asprela_2_Campo_Alegre_Bike",
+            ("Asprela", "Campo Alegre", "PublicTransport"): "Asprela_2_Campo_Alegre_PublicTransport",
+            ("Asprela", "Campo Alegre", "Car"): "Asprela_2_Campo_Alegre_Car",
+            ("Campo Alegre", "Asprela", "Bike"): "Campo_Alegre_2_Asprela_Bike",
+            ("Campo Alegre", "Asprela", "PublicTransport"): "Campo_Alegre_2_Asprela_PublicTransport",
+            ("Campo Alegre", "Asprela", "Car"): "Campo_Alegre_2_Asprela_Car",
+        }
 
-    #     # Determine the route based on the agent's origin, destination, and mode
-    #     route_key = (agent.origin, agent.destination, selected_mode)
-    #     if route_key not in route_map:
-    #         raise ValueError(f"Invalid route or mode: {route_key}")
+        # Determine the route based on the agent's origin, destination, and mode
+        route_key = (agent.origin, agent.destination, selected_mode)
+        if route_key not in route_map:
+            raise ValueError(f"Invalid route or mode: {route_key}")
 
-    #     # Update the agent's route and graph
-    #     agent.route_name = route_map[route_key]
-    #     agent.route_graph = self.routes[self.route_names.index(agent.route_name)]
+        # Update the agent's route and graph
+        agent.route_name = route_map[route_key]
+        agent.route_graph = self.routes[self.route_names.index(agent.route_name)]
         
     def update_traffic_volume(self):
         """Calculate and update the traffic volume for the current episode."""
@@ -954,7 +956,7 @@ class TrafficAgent:
         co2_penalty = co2_emission * 0.1  # Increased penalty for emissions
         
         # CO2 savings bonus compared to cars
-        co2_savings_bonus = 5 if self.last_action == "PublicTransport" and co2_emission < 50 else 0
+        co2_savings_bonus = 10 if self.last_action == "PublicTransport" and co2_emission < 50 else 0
 
         # Credits calculation
         if self.last_action == "Bike":
