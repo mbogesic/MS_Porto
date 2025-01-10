@@ -155,7 +155,7 @@ class TrafficModel(Model):
         self.current_episode_emissions = 0  # Running total for the current episode
         # self.num_clusters = num_clusters  # Number of clusters
         # self.cluster_q_tables = {i: {} for i in range(num_clusters)}  # Q-tables for each cluster
-        self.alpha = alpha
+        self.alpha = 0.1 #or 'alpha'
         self.gamma = gamma
         self.epsilon = epsilon
         # self.cluster_definitions = self.define_clusters()  # Define clusters based on attributes
@@ -665,13 +665,23 @@ class TrafficModel(Model):
         
         # Penalize over-reliance on a single mode
         mode_share = self.mode_distributions[-1][agent.last_action] / self.num_agents
-        overreliance_penalty = -2 * max(0, mode_share - 0.5)  # Penalty if mode share > 50%
+        
+        #overreliance_penalty = -2 * max(0, mode_share - 0.5)  # Penalty if mode share > 50%
+        #reward = base_rewards[action] + overreliance_penalty # Default reward + penalty
+        penalty_scaling_factor = 5  # Introduce scaling for flexibility
+        #overreliance_penalty = -penalty_scaling_factor * max(0, mode_share - 0.3)  # Penalize if mode share > 30%
+        #reward = base_rewards[action] + overreliance_penalty
+        overreliance_threshold = 0.2  # Lower threshold drastically
+        overreliance_penalty = -penalty_scaling_factor * max(0, mode_share - overreliance_threshold)
+        reward = base_rewards[action] + overreliance_penalty
 
-        reward = base_rewards[action] + overreliance_penalty # Default reward + penalty
-        
         # Credits as a multiplier for biking
-        credit_factor = agent.credits / 50  # Normalize credits impact
-        
+        #credit_factor = agent.credits / 50  # Normalize credits impact
+        credit_scaling = 0.1  # Introduce a scaling factor for finer adjustments
+        #credit_factor = agent.credits * credit_scaling
+        unused_credit_penalty = -2 * (50 - agent.credits) / 50  # Penalize unused credits more aggressively
+        credit_factor = agent.credits * credit_scaling + unused_credit_penalty
+
         # Dynamic reward based on emissions
         emission_factor = 1.0 - (self.current_episode_emissions / max(self.total_co2_emissions, 1))
         public_transport_bonus = 2 * emission_factor  # Extra reward for low emissions
@@ -757,8 +767,10 @@ class TrafficModel(Model):
         
         self.step_count += 1   
         # Decay epsilon to reduce exploration over time
-        self.epsilon = max(0.05, self.epsilon * 0.99)  # Decay but keep a minimum exploration
-  
+        #self.epsilon = max(0.05, self.epsilon * 0.99)  # Decay but keep a minimum exploration
+        epsilon_decay_factor = 0.9  # Faster decay for smaller conversion scenarios
+        self.epsilon = max(0.01, self.epsilon * epsilon_decay_factor)
+
         # # Apply weather effects
         # if self.current_weather == "rain":
         #     for agent in self.schedule.agents:
@@ -873,7 +885,9 @@ class TrafficAgent:
         # self.income_level = random.choice(["low", "medium", "high"])
         # self.cluster = self.model.get_cluster(self)  # Assign the agent to a cluster
         # self.cluster_q_table = self.model.cluster_q_tables[self.cluster]  # Reference the cluster's Q-table
-        self.alpha = self.model.alpha  # Learning rate
+        #self.alpha = self.model.alpha  # Learning rate
+        self.alpha = max(0.02, 0.3 / (1 + self.model.current_episode * 0.005))  # High initial alpha, slower decay
+
         self.gamma = self.model.gamma  # Discount factor
         self.epsilon = self.model.epsilon  # Exploration rate
         self.q_table = {}  # Initialize the agent's Q-table
@@ -927,42 +941,47 @@ class TrafficAgent:
         """
         # Base credit rewards by mode
         base_credits = {
-            "Bike": 50,  # Higher reward for biking
-            "PublicTransport": 20,  # Medium reward for public transport
-            "Car": -40,  # Larger penalty for car usage
+            "Bike": 60,  # Drastically higher reward for biking
+            "PublicTransport": 15,  # Reduced reward for public transport
+            "Car": -50,  # Drastically larger penalty for car usage
         }
 
         # Biking streak multiplier
-        streak_multiplier = 1 + (self.biking_streak * 0.25)  # 25% bonus per streak
-
+        streak_multiplier = 1 + (self.biking_streak * 0.4)  # 40% bonus per streak, more aggressive
 
         # Adjust credits for biking based on population share
         bike_population_ratio = self.model.mode_distributions[-1]["Bike"] / self.model.num_agents
-        biking_adjustment = max(0.5, 1.5 - bike_population_ratio)  # Reduce reward as biking share increases
+        biking_adjustment = max(0.3, 2 - bike_population_ratio)  # Stronger reduction as biking share increases
 
         # CO2 emission-based adjustment
-        co2_penalty = co2_emission * 0.1  # Increased penalty for emissions
-        
+        co2_penalty = co2_emission * 0.2  # Stronger penalty for emissions (doubled factor)
+
         # CO2 savings bonus compared to cars
-        co2_savings_bonus = 5 if self.last_action == "PublicTransport" and co2_emission < 50 else 0
+        co2_savings_bonus = 10 if self.last_action == "PublicTransport" and co2_emission < 50 else 0
 
         # Credits calculation
         if self.last_action == "Bike":
             self.credits += (base_credits["Bike"] * streak_multiplier * biking_adjustment)
         elif self.last_action == "PublicTransport":
-            self.credits += (base_credits["PublicTransport"] + co2_savings_bonus - co2_penalty) * 1.2 # Apply a 20% multiplier
+            self.credits += (base_credits["PublicTransport"] + co2_savings_bonus - co2_penalty) * 1.5  # Apply a 50% multiplier
         elif self.last_action == "Car":
             self.credits += base_credits["Car"] - co2_penalty
         else:
-            self.credits += -co2_penalty
+            self.credits += -co2_penalty  # Penalize even idle actions for emissions
 
-        if self.last_action == "Bike" and self.model.current_episode_emissions > self.model.total_co2_emissions * 0.8:
-            self.credits += 5  # Extra bonus for biking when emissions are high
+        # Additional incentive for biking under high emissions
+        if self.last_action == "Bike" and self.model.current_episode_emissions > self.model.total_co2_emissions * 0.7:
+            self.credits += 10  # Double the extra bonus for biking when emissions are high
 
-        
+        # Penalty for idling (no action or invalid action)
+        if self.last_action not in base_credits:
+            self.credits += -20  # Explicit penalty for inactivity
+
         # Ensure credits don't drop below zero
         self.credits = max(self.credits, 0)  # Credits cannot be negative
 
+        # Cap credits to prevent runaway accumulation
+        self.credits = min(self.credits, 200)  # Maximum credit cap
 
     def select_action(self):
         """
