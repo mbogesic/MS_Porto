@@ -784,8 +784,6 @@ class TrafficModel(Model):
         self.current_episode_emissions += step_emissions
         self.total_co2_emissions += step_emissions
  
-
-
         # After each step, update the traffic volume
         self.update_traffic_volume()
         

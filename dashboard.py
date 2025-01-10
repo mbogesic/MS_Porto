@@ -43,7 +43,7 @@ app.layout = html.Div([
     html.H1("AMC Simulation Dashboard"),
     dcc.Dropdown(
         id='episode-dropdown',
-        options=[{'label': f"Episode {ep_id}", 'value': ep_id} for ep_id in model.episode_history.keys()],
+        options=[{'label': f"Episode {ep_id}", 'value': ep_id} for ep_id in sorted(model.episode_history.keys())],
         placeholder="Select an Episode",
         style={'width': '50%'}
     ),
@@ -115,7 +115,8 @@ def update_agent_dropdown(selected_episode):
         return []
 
     episode_data = model.episode_history.get(selected_episode, {})
-    agent_options = [{'label': f"Agent {agent_id}", 'value': agent_id} for agent_id in episode_data.get("agents", {}).keys()]
+    sorted_agents = sorted(episode_data.get("agents", {}).keys())
+    agent_options = [{'label': f"Agent {agent_id}", 'value': agent_id} for agent_id in sorted_agents]
     return agent_options
 
 @app.callback(
@@ -168,8 +169,37 @@ def update_plots(n_intervals):
         overall_mean_co2 = sum(cumulative_co2) / len(cumulative_co2) if cumulative_co2 else 0
         mean_co2_per_episode = [overall_mean_co2] * len(cumulative_co2)
         
+        # Cumulative CO2 Plot
+        cumulative_co2 = data["co2_emissions_over_time"]
+        if len(cumulative_co2) > 30:
+            # Separate into pre-reset and post-reset data
+            pre_reset_co2 = cumulative_co2[:30]
+            post_reset_co2 = [
+                sum(data["co2_emissions_per_episode"][30:i + 1]) for i in range(30, len(data["co2_emissions_per_episode"]))
+            ]
+        else:
+            pre_reset_co2 = cumulative_co2
+            post_reset_co2 = []
+
         cumulative_plot = go.Figure(
-            data=[go.Scatter(x=episode_numbers, y=data["co2_emissions_over_time"], mode="lines+markers", name="Cumulative CO2 Emissions")],
+            data=[
+                # Pre-reset cumulative CO2 trajectory
+                go.Scatter(
+                    x=list(range(len(pre_reset_co2))),
+                    y=pre_reset_co2,
+                    mode="lines+markers",
+                    name="Warmup CO2 (0-29)",
+                    line=dict(color="gray")
+                ),
+                # Post-reset cumulative CO2 trajectory starting at zero
+                go.Scatter(
+                    x=list(range(len(post_reset_co2))),
+                    y=post_reset_co2,
+                    mode="lines+markers",
+                    name="Post-Warmup CO2 (30+)",
+                    line=dict(color="green")
+                )
+            ],
             layout=go.Layout(
                 title="Cumulative CO2 Emissions Over Episodes",
                 xaxis=dict(title="Episodes"),
@@ -177,9 +207,10 @@ def update_plots(n_intervals):
             )
         )
 
+
         episode_plot = go.Figure(
             data=[go.Bar(x=episode_numbers, y=data["co2_emissions_per_episode"], marker_color=bar_colors, name="CO2 Emissions Per Episode"),
-                    go.Scatter(x=list(range(len(mean_co2))), y=mean_co2_per_episode, mode="lines", name="Mean CO2")],
+                    go.Scatter(x=list(range(len(mean_co2))), y=mean_co2_per_episode, mode="lines", name="Mean CO2", line=dict(dash="dash", color="red"))],
             layout=go.Layout(
                 title="CO2 Emissions Per Episode",
                 xaxis=dict(title="Episodes"),
@@ -263,51 +294,35 @@ def update_plots(n_intervals):
             )
         )
 
+        agent_credits = model.get_agent_credits()
+        sorted_agent_credits = sorted(agent_credits.items(), key=lambda x: x[1], reverse=True)
+        sorted_agent_ids = [item[0] for item in sorted_agent_credits]
+        sorted_credits = [item[1] for item in sorted_agent_credits]
 
         agents_plot = go.Figure(
-            data=[go.Bar(x=list(model.get_agent_credits().keys()), y=list(model.get_agent_credits().values()), name="Agent Credits")],
+            data=[go.Bar(x=sorted_agent_ids, y=sorted_credits, name="Agent Credits")],
             layout=go.Layout(
                 title="Agent Credits",
-                xaxis=dict(title="Agent IDs"),
+                xaxis=dict(title="Agent IDs", categoryorder="total descending"),
                 yaxis=dict(title="Credits"),
             )
         )
+        mean_credit = sum(sorted_credits) / len(sorted_credits) if sorted_credits else 0
+        agents_plot.add_trace(
+            go.Scatter(
+                x=sorted_agent_ids, 
+                y=[mean_credit] * len(sorted_agent_ids), 
+                mode="lines", 
+                name="Mean Credit", 
+                line=dict(dash="dash", color="red")
+            )
+        )
+
 
         return cumulative_plot, episode_plot, mode_plot, credits_plot, agents_plot, True  # Disable interval updates
     else:
         # Continue with normal updates
         return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, False
-
-
-
-    #CREDITS SCHEME
-    #agent_credits = model.get_agent_credits()
-    #agent_ids = list(agent_credits.keys())
-    #credits = list(agent_credits.values())
-    #print(f"Agent Credits at Interval {n_intervals}: ")
-    #for agent_id, credit in agent_credits.items():
-    #    print(f"Agent {agent_id}: {credit} credits")
-
-    #plots
-    # if model.simulation_finished:
-    #     agent_credits = model.get_agent_credits()
-    #     credits_plot = go.Figure(
-    #         data=[go.Bar(x=list(agent_credits.keys()), y=list(agent_credits.values()), name="Agent Credits")],
-    #         layout=go.Layout(
-    #             title="Agent Credits",
-    #             xaxis=dict(title="Agent IDs"),
-    #             yaxis=dict(title="Credits"),
-    #         )
-    #     )
-    # else:
-    #     credits_plot = go.Figure(
-    #         layout=go.Layout(
-    #             title="Agent Credits (Simulation Running)",
-    #             xaxis=dict(title="Agent IDs"),
-    #             yaxis=dict(title="Credits"),
-    #         )
-    #     )
-    # return cumulative_plot, episode_plot, traffic_volume_plot, credits_plot
 
 if __name__ == "__main__":
    
