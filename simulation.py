@@ -107,7 +107,7 @@ class CongestionNetworkGrid(NetworkGrid):
             agent.credits += total_penalty
 
 class TrafficModel(Model):
-    def __init__(self, nodes_and_edges_folder, num_agents, step_time=10, episodes=100, num_clusters=3, alpha=0.1, gamma=0.9, epsilon=0.1, combined_nodes_file=None, combined_edges_file=None):
+    def __init__(self, nodes_and_edges_folder, num_agents, step_time=10, episodes=100, num_clusters=3, alpha=0.15, gamma=0.9, epsilon=0.25, combined_nodes_file=None, combined_edges_file=None):
         """
         Initialize the traffic model.
 
@@ -263,6 +263,8 @@ class TrafficModel(Model):
                 agent.time_pressure = snapshot["state"]["time_pressure"]
                 agent.motivation = snapshot["state"]["motivation"]
                 agent.traffic = snapshot["state"]["traffic"]
+                agent.credits = 0  # Reset credits for the new episode
+                agent.biking_streak = 0  # Reset biking streak
             else:
                 # Randomize state for new episodes
                 agent.set_state()
@@ -279,13 +281,13 @@ class TrafficModel(Model):
                 }
 
             self.episode_summary["agents"][agent.unique_id]["route"] = agent.route_name
-            agent.human_factor *= 0.85  # Agents adapt over time
+            agent.human_factor *= 0.998  # Agents adapt over time
 
         total_agents = len(self.custom_agents)
         bike_share = start_distribution["Bike"] / total_agents
 
         # Increase biking credits if share is below 50%
-        if bike_share < 0.5:
+        if bike_share < 0.3:
             for agent in self.custom_agents:
                 if agent.last_action == "Bike":
                     agent.credits += 5  # Extra reward for biking
@@ -658,10 +660,11 @@ class TrafficModel(Model):
         action = agent.last_action
 
         base_rewards = {
-            "Bike": 5 if self.current_episode >= 30 else 3,  # Reduce biking reward during warmup
-            "PublicTransport": 3,  # Keep public transport reward constant
-            "Car": -5 if self.current_episode >= 30 else -3,  # Less aggressive car penalty during warmup
+            "Bike": 2,
+            "PublicTransport": 2,
+            "Car": -2,
         }
+
         
         # Penalize over-reliance on a single mode
         mode_share = self.mode_distributions[-1][agent.last_action] / self.num_agents
@@ -670,37 +673,44 @@ class TrafficModel(Model):
         reward = base_rewards[action] + overreliance_penalty # Default reward + penalty
         
         # Credits as a multiplier for biking
-        credit_factor = agent.credits / 50  # Normalize credits impact
+        credit_factor = agent.credits / 1000  # Normalize credits impact
         
         # Dynamic reward based on emissions
         emission_factor = 1.0 - (self.current_episode_emissions / max(self.total_co2_emissions, 1))
-        public_transport_bonus = 2 * emission_factor  # Extra reward for low emissions
+        public_transport_bonus = 1.2 * emission_factor  # Extra reward for low emissions
 
         # Streak multiplier for biking
-        streak_multiplier = 1 + (agent.biking_streak * 0.1)  # 10% increase per streak
+        streak_multiplier = 1 + (agent.biking_streak * 0.05)  # 10% increase per streak
         
-        co2_penalty = agent.calculate_co2_emissions() * 0.1  # CO2 penalty
+        co2_penalty = agent.calculate_co2_emissions() * 0.01  # CO2 penalty
 
+        bike_population_ratio = self.mode_distributions[-1]["Bike"] / self.num_agents
+        biking_adjustment = max(0.3, 1.2 - bike_population_ratio)  # Reduce reward as biking share increases
+        base_rewards["Bike"] *= biking_adjustment
+        
         # Adjust for time pressure
         if state["time_pressure"] == "late" and action == "Bike":
             reward -= 5  # Penalize biking when late
         elif state["time_pressure"] == "early" and action == "Bike":
-            reward += 2  # Bonus for biking when early
+            reward += 1  # Bonus for biking when early
         
         # Adjust for motivation
         if state["motivation"] == "motivated" and action in ["Bike", "PublicTransport"]:
-            reward += 3  # Bonus for eco-friendly choices when motivated
+            reward += 1  # Bonus for eco-friendly choices when motivated
 
         # Adjust for traffic
         if state["traffic"] == "high" and action == "Car":
-            reward -= 5  # Penalize car usage in high traffic
+            reward -= 3  # Penalize car usage in high traffic
         
+        if action != agent.get_state()["current_mode"]:
+            reward -= 20  # Increased penalty for switching modes
+     
         if action == "Bike":
-            return (base_rewards["Bike"] * streak_multiplier + credit_factor)
+            return (reward * streak_multiplier + credit_factor)
         elif action == "PublicTransport":
-            return base_rewards["PublicTransport"] + public_transport_bonus - co2_penalty
+            return reward + public_transport_bonus
         elif action == "Car":
-            return base_rewards["Car"] - co2_penalty # No bonus for cars
+            return reward - co2_penalty # No bonus for cars
         else:
             return reward  # Default reward
 
@@ -757,7 +767,7 @@ class TrafficModel(Model):
         
         self.step_count += 1   
         # Decay epsilon to reduce exploration over time
-        self.epsilon = max(0.05, self.epsilon * 0.99)  # Decay but keep a minimum exploration
+        self.epsilon = max(0.1, self.epsilon * 0.99)  # Decay but keep a minimum exploration
   
         # # Apply weather effects
         # if self.current_weather == "rain":
@@ -891,7 +901,7 @@ class TrafficAgent:
         self.co2_emissions_per_mode = self.model.co2_emissions_per_mode
         # HUMAN FACTOR PROPERTIES
         self.human_factor = random.uniform(0.5, 1.0)  # Resistance to change (0.5 - 1.0), i.e. "openness" towards the credit schema
-        self.defiance = random.uniform(0, 0.1)  # Small probability of defying logic (0-10%)
+        self.defiance = random.uniform(0, 0.25)  # Small probability of defying logic (0-10%)
         
         self.biking_streak = 0  # Tracks consecutive biking actions
         
@@ -927,9 +937,9 @@ class TrafficAgent:
         """
         # Base credit rewards by mode
         base_credits = {
-            "Bike": 50,  # Higher reward for biking
-            "PublicTransport": 20,  # Medium reward for public transport
-            "Car": -40,  # Larger penalty for car usage
+            "Bike": 20,  # Higher reward for biking
+            "PublicTransport": 5,  # Medium reward for public transport
+            "Car": -15,  # Larger penalty for car usage
         }
 
         # Biking streak multiplier
@@ -938,8 +948,8 @@ class TrafficAgent:
 
         # Adjust credits for biking based on population share
         bike_population_ratio = self.model.mode_distributions[-1]["Bike"] / self.model.num_agents
-        biking_adjustment = max(0.5, 1.5 - bike_population_ratio)  # Reduce reward as biking share increases
-
+        biking_adjustment = max(0.3, 1.2 - bike_population_ratio)  # Reduce reward as biking share increases
+        
         # CO2 emission-based adjustment
         co2_penalty = co2_emission * 0.1  # Increased penalty for emissions
         
@@ -992,7 +1002,7 @@ class TrafficAgent:
             return random.choice(self.get_possible_actions())  # Explore
         # Incorporate human factor into exploitation
         best_action = max(self.get_possible_actions(), 
-                        key=lambda action: self.model.q_table[state][action] * (1 - self.human_factor))
+                        key=lambda action: self.model.q_table[state][action] * (1 - self.human_factor * 0.5))
         return best_action
         # Exploit
         # If cluster q_table is preferred:
