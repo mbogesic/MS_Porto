@@ -17,8 +17,12 @@ from simulation import TrafficModel
 nodes_and_edges_folder = "nodes_and_edges"
 combined_nodes_file = os.path.join(nodes_and_edges_folder, "all_routes_combined_nodes.csv")
 combined_edges_file = os.path.join(nodes_and_edges_folder, "all_routes_combined_edges.csv")
+step_time_dimension = 10.0   # s/step aka the "resolution" of the simulation, DON'T TOUCH
+
+
+### TWEAK No. Agents AND No. Episodes PARAMETERS TO YOUR LIKING ###
+### (1 Episode = 1 Day) ###
 num_agents = 1000
-step_time_dimension = 10.0   # s/step aka the "resolution" of the simulation, D TOUCH
 episodes = 60
 
 # Initialize the model
