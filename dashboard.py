@@ -17,9 +17,23 @@ from simulation import TrafficModel
 nodes_and_edges_folder = "nodes_and_edges"
 combined_nodes_file = os.path.join(nodes_and_edges_folder, "all_routes_combined_nodes.csv")
 combined_edges_file = os.path.join(nodes_and_edges_folder, "all_routes_combined_edges.csv")
+step_time_dimension = 10.0   # s/step aka the "resolution" of the simulation, DON'T TOUCH
+
+
+### TWEAK No. Agents AND No. Episodes PARAMETERS TO YOUR LIKING ###
+### (1 Episode = 1 Day) ###
 num_agents = 1000
-step_time_dimension = 60.0   # s/step aka the "resolution" of the simulation
-episodes = 30
+episodes = 60
+
+# Initialize the model
+model = TrafficModel(
+    nodes_and_edges_folder,
+    num_agents,  
+    step_time_dimension, 
+    episodes,
+    combined_nodes_file=combined_nodes_file,
+    combined_edges_file=combined_edges_file
+)
 
 # # Global list to track CO2 emissions over time
 # co2_emissions_over_time = []  # Running total of CO2 emissions
@@ -31,18 +45,43 @@ app.title = "AMC Simulation Dashboard"
 
 app.layout = html.Div([
     html.H1("AMC Simulation Dashboard"),
+    dcc.Dropdown(
+        id='episode-dropdown',
+        options=[{'label': f"Episode {ep_id}", 'value': ep_id} for ep_id in sorted(model.episode_history.keys())],
+        placeholder="Select an Episode",
+        style={'width': '50%'}
+    ),
+    html.Div(id='episode-details', style={'marginTop': '20px'}),  # Mode Distribution Display
+
+    dcc.Dropdown(
+        id='agent-dropdown',
+        placeholder="Select an Agent",
+        style={'width': '50%', 'marginTop': '20px'}
+    ),
+    html.Div(id='agent-details', style={'marginTop': '20px'}),  # Agent Details Display
+
     dcc.Graph(id="metric-plot", style={"width": "100%", "height": "400px"}),
     dcc.Graph(id="episode-plot", style={"width": "100%", "height": "400px"}),
-    dcc.Graph(id="credits-plot", style={"width": "100%", "height": "400px"}),  # New graph for credits
+    dcc.Graph(id="mode-distribution-plot", style={"width": "100%", "height": "400px"}),
+    # dcc.Graph(id="traffic-volume-reduction-plot", style={"width": "100%", "height": "400px"}),
+    dcc.Graph(id="cumulative-credits-plot", style={"width": "100%", "height": "400px"}),
+    dcc.Graph(id="credits-plot", style={"width": "100%", "height": "400px"}),
     dcc.Interval(
         id="interval-component",
+<<<<<<< HEAD
         interval=1000,  # 1000ms = 1 second
         n_intervals=0,
         disabled=False
+=======
+        interval=1000,
+        n_intervals=0,
+        disabled=model.simulation_finished
+>>>>>>> origin/Experimental-Branch
     ),
 ])
 
 @app.callback(
+<<<<<<< HEAD
     [Output("metric-plot", "figure"), 
     Output("episode-plot", "figure"), 
     Output("credits-plot", "figure"),  # Include the credits plot
@@ -50,72 +89,65 @@ app.layout = html.Div([
     [Input("interval-component", "n_intervals")]
 )
 def update_plots(n_intervals):
-    # Retrieve simulation data for plots
-    data = model.get_episode_data()
-
-    # Prepare episode indices
-    episode_numbers = list(range(len(data["co2_emissions_per_episode"])))
-
-    # Create the plots
-    cumulative_plot = go.Figure(
-        data=[
-            go.Scatter(
-                x=episode_numbers,
-                y=data["co2_emissions_over_time"],
-                mode="lines+markers",
-                name="Cumulative CO2 Emissions",
-            )
-        ],
-        layout=go.Layout(
-            title="Cumulative CO2 Emissions Over Episodes",
-            xaxis=dict(title="Episodes"),
-            yaxis=dict(title="CO2 Emissions (g)"),
-        ),
-    )
-
-    episode_plot = go.Figure(
-        data=[
-            go.Bar(
-                x=episode_numbers,
-                y=data["co2_emissions_per_episode"],
-                name="CO2 Emissions Per Episode",
-            )
-        ],
-        layout=go.Layout(
-            title="CO2 Emissions Per Episode",
-            xaxis=dict(title="Episodes"),
-            yaxis=dict(title="CO2 Emissions (g)"),
-        ),
-    )
-
-    #CREDITS SCHEME
-    #agent_credits = model.get_agent_credits()
-    #agent_ids = list(agent_credits.keys())
-    #credits = list(agent_credits.values())
-    #print(f"Agent Credits at Interval {n_intervals}: ")
-    #for agent_id, credit in agent_credits.items():
-    #    print(f"Agent {agent_id}: {credit} credits")
-
-    #plots
     if model.simulation_finished:
-        # Fetch agent credits at the end of the simulation
-        agent_credits = model.get_agent_credits()
-        agent_ids = list(agent_credits.keys())
-        credits = list(agent_credits.values())
+        print(f"Update Plots Called: Simulation Finished = {model.simulation_finished}")
+        data = model.get_unfiltered_episode_data()
+        # data = model.get_filtered_episode_data()
+        # print("Data Retrieved for Plots:", data)  # Debugging
+        # Adjust episode numbers to start at 30
+        start_episode = 30
+        if len(data["co2_emissions_per_episode"]) > 30:
+            episode_numbers = list(range(len(data["co2_emissions_per_episode"])))
+        else:
+            episode_numbers = list(range(start_episode, start_episode + len(data["co2_emissions_per_episode"])))
 
-        # Create a plot for agent credits
-        credits_plot = go.Figure(
-            data=[go.Bar(
-                x=agent_ids,
-                y=credits,
-                name="Agent Credits"
-            )],
+        # Define bar colors: "lightgrey" for episodes < 30, "blue" for others
+        bar_colors = ["lightgrey" if ep < 30 else "blue" for ep in episode_numbers]
+
+        # Cumulative CO2 Plot
+        cumulative_co2 = data["co2_emissions_per_episode"]
+        mean_co2 = [sum(cumulative_co2[:i+1]) / (i+1) for i in range(len(cumulative_co2))]
+        overall_mean_co2 = sum(cumulative_co2) / len(cumulative_co2) if cumulative_co2 else 0
+        mean_co2_per_episode = [overall_mean_co2] * len(cumulative_co2)
+        
+        # Cumulative CO2 Plot
+        cumulative_co2 = data["co2_emissions_over_time"]
+        if len(cumulative_co2) > 30:
+            # Separate into pre-reset and post-reset data
+            pre_reset_co2 = cumulative_co2[:30]
+            post_reset_co2 = [
+                sum(data["co2_emissions_per_episode"][30:i + 1]) for i in range(30, len(data["co2_emissions_per_episode"]))
+            ]
+        else:
+            pre_reset_co2 = cumulative_co2
+            post_reset_co2 = []
+
+        cumulative_plot = go.Figure(
+            data=[
+                # Pre-reset cumulative CO2 trajectory
+                go.Scatter(
+                    x=list(range(len(pre_reset_co2))),
+                    y=pre_reset_co2,
+                    mode="lines+markers",
+                    name="Warmup CO2 (0-29)",
+                    line=dict(color="gray")
+                ),
+                # Post-reset cumulative CO2 trajectory starting at zero
+                go.Scatter(
+                    x=list(range(len(post_reset_co2))),
+                    y=post_reset_co2,
+                    mode="lines+markers",
+                    name="Post-Warmup CO2 (30+)",
+                    line=dict(color="green")
+                )
+            ],
             layout=go.Layout(
-                title="Agent Credits",
-                xaxis=dict(title="Agent IDs"),
-                yaxis=dict(title="Credits")
+                title="Cumulative CO2 Emissions Over Episodes",
+                xaxis=dict(title="Episodes"),
+                yaxis=dict(title="CO2 Emissions (g)"),
             )
         )
+<<<<<<< HEAD
         return cumulative_plot, episode_plot, credits_plot, True
     else:
         # Show a placeholder plot if the simulation is not finished
@@ -132,18 +164,128 @@ def update_plots(n_intervals):
             )
         )
         return cumulative_plot, episode_plot, credits_plot, False
+=======
+
+
+        episode_plot = go.Figure(
+            data=[go.Bar(x=episode_numbers, y=data["co2_emissions_per_episode"], marker_color=bar_colors, name="CO2 Emissions Per Episode"),
+                    go.Scatter(x=list(range(len(mean_co2))), y=mean_co2_per_episode, mode="lines", name="Mean CO2", line=dict(dash="dash", color="red"))],
+            layout=go.Layout(
+                title="CO2 Emissions Per Episode",
+                xaxis=dict(title="Episodes"),
+                yaxis=dict(title="CO2 Emissions (g)"),
+            )
+        )
+
+        # Mode Distribution Plot
+        mode_distributions = [
+            model.episode_history[ep]["mode_distribution"] for ep in model.episode_history.keys()
+        ]
+        modes = list(mode_distributions[0].keys())
+        layers = {
+            mode: [distribution.get(mode, 0) for distribution in mode_distributions] for mode in modes
+        }
+
+        # Define color sets for saturation adjustment
+        color_palette = {
+            "Bike": "rgba(0, 128, 0, 1)",  # Green
+            "PublicTransport": "rgba(0, 0, 255, 1)",  # Blue
+            "Car": "rgba(255, 0, 0, 1)",  # Red
+        }
+        faded_palette = {
+            "Bike": "rgba(0, 128, 0, 0.3)",  # Faded Green
+            "PublicTransport": "rgba(0, 0, 255, 0.3)",  # Faded Blue
+            "Car": "rgba(255, 0, 0, 0.3)",  # Faded Red
+        }
+
+        mode_plot = go.Figure(
+            data=[
+                go.Bar(
+                    name=mode,
+                    x=list(range(len(mode_distributions))),
+                    y=counts,
+                    marker_color=[
+                        faded_palette[mode] if ep < 30 else color_palette[mode] for ep in range(len(mode_distributions))
+                    ]
+                ) for mode, counts in layers.items()
+            ],
+            layout=go.Layout(
+                title="Mode Distribution Per Episode",
+                barmode="stack",
+                xaxis=dict(title="Episodes"),
+                yaxis=dict(title="Count"),
+            )
+        )
+        
+        # traffic_volume_plot = go.Figure(
+        #     layout=go.Layout(
+        #         title="Traffic Volume Reduction Over Episodes (No Data)",
+        #         xaxis=dict(title="Episodes"),
+        #         yaxis=dict(title="Reduction Percentage (%)"),
+        #     )
+        # )
+        # if "traffic_volume_per_episode" in data and data["traffic_volume_per_episode"]:
+        #     traffic_volume_initial = data["traffic_volume_per_episode"][0]
+        #     traffic_volume_reduction = [
+        #         (traffic_volume_initial - tv) / traffic_volume_initial * 100 for tv in data["traffic_volume_per_episode"]
+        #     ]
+        #     traffic_volume_plot = go.Figure(
+        #         data=[go.Scatter(x=episode_numbers, y=traffic_volume_reduction, mode="lines+markers", name="Traffic Volume Reduction (%)")],
+        #         layout=go.Layout(
+        #             title="Traffic Volume Reduction Over Episodes",
+        #             xaxis=dict(title="Episodes"),
+        #             yaxis=dict(title="Reduction Percentage (%)"),
+        #         )
+        #     )
+        
+        # Cumulative Credits Plot
+        credits_per_episode = []
+        for episode_id in range(len(model.episode_history)):
+            episode_credits = sum(agent_data['credits'] for agent_data in model.episode_history[episode_id]['agents'].values())
+            credits_per_episode.append(episode_credits)
+
+        credits_plot = go.Figure(
+            data=[go.Bar(x=list(range(len(credits_per_episode))), y=credits_per_episode, marker_color=bar_colors, name="Credits Per Episode")],
+            layout=go.Layout(
+                title="Cumulative Credits Per Episode",
+                xaxis=dict(title="Episodes"),
+                yaxis=dict(title="Total Credits"),
+            )
+        )
+
+        agent_credits = model.get_agent_credits()
+        sorted_agent_credits = sorted(agent_credits.items(), key=lambda x: x[1], reverse=True)
+        sorted_agent_ids = [item[0] for item in sorted_agent_credits]
+        sorted_credits = [item[1] for item in sorted_agent_credits]
+
+        agents_plot = go.Figure(
+            data=[go.Bar(x=sorted_agent_ids, y=sorted_credits, name="Agent Credits")],
+            layout=go.Layout(
+                title="Agent Credits",
+                xaxis=dict(title="Agent IDs", categoryorder="total descending"),
+                yaxis=dict(title="Credits"),
+            )
+        )
+        mean_credit = sum(sorted_credits) / len(sorted_credits) if sorted_credits else 0
+        agents_plot.add_trace(
+            go.Scatter(
+                x=sorted_agent_ids, 
+                y=[mean_credit] * len(sorted_agent_ids), 
+                mode="lines", 
+                name="Mean Credit", 
+                line=dict(dash="dash", color="red")
+            )
+        )
+
+
+        return cumulative_plot, episode_plot, mode_plot, credits_plot, agents_plot, True  # Disable interval updates
+    else:
+        # Continue with normal updates
+        return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, False
+>>>>>>> origin/Experimental-Branch
 
 if __name__ == "__main__":
-    # Initialize the model
-    model = TrafficModel(
-        nodes_and_edges_folder,
-        num_agents,  
-        step_time_dimension, 
-        episodes,
-        combined_nodes_file=combined_nodes_file,
-        combined_edges_file=combined_edges_file
-    )
-    
+   
     while not model.simulation_finished:
         model.step()
     app.run_server(debug=False)

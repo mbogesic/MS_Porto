@@ -6,6 +6,11 @@ from mesa.space import NetworkGrid
 from mesa.time import RandomActivation
 import Formulas as f
 import random
+import warnings
+from pprint import pprint
+
+# Ignore all UserWarnings
+warnings.filterwarnings("ignore", category=UserWarning)
 
 # Automatically change the working directory to the script's location
 script_dir = os.path.dirname(os.path.abspath(__file__))  # Get the script's directory
@@ -57,6 +62,49 @@ class CongestionNetworkGrid(NetworkGrid):
         """
         edge_key = (u, v)
         return len(self.edge_congestion.get(edge_key, []))
+    def compute_congestion_penalty(self, u, v):
+        """
+        Compute a congestion penalty for cars based on the number of agents on edge (u, v).
+        """
+        congestion_level = self.get_edge_congestion(u, v)
+        
+        # Define a congestion threshold; above this, penalties increase significantly
+        congestion_threshold = 10  # Example threshold
+
+        if congestion_level > congestion_threshold:
+            congestion_factor = congestion_level / congestion_threshold
+            # The higher the congestion factor, the greater the penalty
+            return congestion_factor
+        else:
+            return 1.0  # Minimal or no congestion
+
+    def update_car_penalties(self, agent, u, v):
+        """
+        Adjust car penalties and credits based on congestion and emissions.
+        """
+        if agent.mode == "Car":  # Only apply penalties to cars
+            # Compute the congestion penalty
+            congestion_penalty = self.compute_congestion_penalty(u, v)
+            
+            # Increase travel time and emissions due to congestion
+            agent.travel_time *= congestion_penalty
+            agent.co2_emissions *= congestion_penalty
+            
+            # Base credit penalties for car usage
+            base_penalty = -40  # Default penalty for using a car
+            congestion_credit_penalty = -10 * (congestion_penalty - 1)  # Additional penalty per congestion factor
+            
+            # Calculate total penalty based on CO2 emissions
+            if agent.co2_emissions > 100:  # Example threshold for high emissions
+                co2_penalty = -20  # Extra penalty for high emissions
+            else:
+                co2_penalty = -5  # Smaller penalty for moderate emissions
+
+            # Total penalty = base penalty + congestion penalty + CO2 penalty
+            total_penalty = base_penalty + congestion_credit_penalty + co2_penalty
+            
+            # Apply penalties to agent credits
+            agent.credits += total_penalty
 
 class TrafficModel(Model):
     def __init__(self, nodes_and_edges_folder, num_agents, step_time=10, episodes=100, alpha=0.3, gamma=0.9, epsilon=0.1, combined_nodes_file=None, combined_edges_file=None):
@@ -93,71 +141,135 @@ class TrafficModel(Model):
         
         self.episodes = episodes
         # Define CO2 emission factors
-        self.co2_factors = {
-            "Bike": 0,  # g/m - According to https://ourworldindata.org/travel-carbon-footprint
-            "Car": 0.17,
-            "PublicTransport": 0.097,
+        self.co2_emissions_per_mode = {
+            "Bike": 0,          # g/s
+            "Car": 0.673,       # g/s (based on 170 g/km at ~14.25 km/h)
+            "PublicTransport": 0.384,  # g/s (based on 97 g/km at ~14.25 km/h)
         }
         self.mode_distributions = []
-
+        self.initial_distribution = {"Bike": 0, "PublicTransport": 0, "Car": 0}
+        
         self.total_co2_emissions = 0  # Cumulative CO2 emissions across all episodes
         self.co2_emissions_over_time = []
         self.co2_emissions_per_episode = []  # CO2 emissions per episode
         self.current_episode_emissions = 0  # Running total for the current episode
+        # self.num_clusters = num_clusters  # Number of clusters
+        # self.cluster_q_tables = {i: {} for i in range(num_clusters)}  # Q-tables for each cluster
         self.alpha = alpha
         self.gamma = gamma
         self.epsilon = epsilon
+        # self.cluster_definitions = self.define_clusters()  # Define clusters based on attributes
+
         self.current_episode = 0
         self.simulation_finished = False
         
-        #ENVIRONMENTAL FACTORS
-        self.weather = "sunny" #clear, rain, extreme heat
-        self.global_fuel_prices = 1.5
-        self.parking_fees = 1.0
-        self.ticket_prices = 1.0
-        self.service_quality = {"Bus":1.0, "Metro":1.0}
-        self.hills = True
-        self.household_sizes = {}
-        self.congestion_charges =0.0
+        # New variables for traffic volume
+        self.traffic_volume_per_episode = []  # To track the traffic volume for each episode
+        self.current_episode_traffic_volume = 0  # Current traffic volume for this episode
 
+        #ENVIRONMENTAL FACTORS
+        # self.weather_conditions = ["sunny", "rain", "extreme_heat"]  # Define possible weather conditions
+        # self.current_weather = "sunny"  # Initialize default weather
+        # self.global_fuel_prices = 1.5
+        # self.parking_fees = 1.0
+        # self.ticket_prices = 1.0
+        # self.service_quality = {"Bus":1.0, "Metro":1.0}
+        # self.hills = True
+        # self.household_sizes = {}
+        # self.congestion_charges =0.0
 
         # Q-table: Nested dictionary for state-action pairs
-        self.q_table = {}
+        # self.q_table = {}
         
         # Load routes and agents
         self.load_routes()
         self.validate_routes()
         self.add_agents()
+ 
+        self.episode_summary = {
+            "agents": {
+                agent.unique_id: {
+                    "route": [],
+                    "emissions": 0,
+                    "rewards": 0,
+                    "actions": [],
+                    "states": [],  # Add a new key to track states
+                    "credits": 0
+                } for agent in self.custom_agents
+            }
+        }
+        
+        self.episode_history = {}
         
         # Initialize environment and agents
         self.reset_environment()
-    def adjust_costs_for_environment(self, mode):
-        """
-        Adjust transportation costs based on environmental factors.
-        """
-        if mode == "Car":
-            fuel_cost = 1.0 * self.global_fuel_prices
-            parking_cost = self.parking_fees
-            return fuel_cost + parking_cost + self.congestion_charges
-        elif mode == "PublicTransport":
-            return self.ticket_prices * self.service_quality["Bus"]
-        elif mode == "Bike":
-            return 0  # Biking is assumed to have no direct cost
-        return 0
+
+    # def initialize_weather(self): #WEATHER TEST
+    #     """
+    #     Initialize settings for a new episode, including randomizing weather.
+    #     """
+    #     # Randomly set the weather for this episode
+    #     self.current_weather = random.choice(self.weather_conditions)
+    #     print(f"Current weather: {self.current_weather}")     
+
+    # def adjust_costs_for_environment(self, mode):
+    #     """
+    #     Adjust transportation costs based on environmental factors.
+    #     """
+    #     if mode == "Car":
+    #         fuel_cost = 1.0 * self.global_fuel_prices
+    #         parking_cost = self.parking_fees
+    #         return fuel_cost + parking_cost + self.congestion_charges
+    #     elif mode == "PublicTransport":
+    #         return self.ticket_prices * self.service_quality["Bus"]
+    #     elif mode == "Bike":
+    #         return 0  # Biking is assumed to have no direct cost
+    #     return 0
     
     def reset_environment(self):
         """Reset the simulation environment while retaining Q-table."""
-        
+        if self.current_episode == 30:
+            print("Transitioning to Episode 30 with the initial state from Episode 0.")
+            self.total_co2_emissions = 0
+            print("Transitioning from warmup to individual Q-tables.")
+
+        # Reset the episode summary
+        self.episode_summary = {
+            "agents": {
+                agent.unique_id: {
+                    "route": [],
+                    "emissions": 0,
+                    "rewards": 0,
+                    "actions": [],
+                    "states": [],
+                    "credits": 0
+                } for agent in self.custom_agents
+            }
+        }
+
         self.completed_agents = 0
         self.simulation_finished = False
         self.step_count = 0
         self.current_episode_emissions = 0
-        
+
         # Count mode distribution at the start of the episode
         start_distribution = {"Bike": 0, "PublicTransport": 0, "Car": 0}
         
         # Reduce human factor across all agents to simulate adaptability
         for agent in self.custom_agents:
+            if self.current_episode == 30:
+                # Reproduce state from snapshot
+                snapshot = self.initial_state_snapshot[agent.unique_id]
+                agent.last_action = snapshot["mode"]
+                agent.time_pressure = snapshot["state"]["time_pressure"]
+                agent.motivation = snapshot["state"]["motivation"]
+                agent.traffic = snapshot["state"]["traffic"]
+                agent.credits = 0  # Reset credits for the new episode
+                agent.biking_streak = 0  # Reset biking streak
+            else:
+                # Randomize state for new episodes
+                agent.set_state()
+
             start_distribution[agent.last_action] += 1
             agent.human_factor *= 0.80  # Agents adapt over time
             agent.defiance *= 0.90  # Reduce defiance gradually over episodes
@@ -173,15 +285,30 @@ class TrafficModel(Model):
         
         # Store the start distribution for analysis
         self.mode_distributions.append(start_distribution)
+        self.episode_summary["mode_distribution"] = start_distribution
+
+        if self.current_episode == 0:
+            self.initial_distribution = start_distribution
+
+        # Dynamically adjust rewards during warmup
+        if self.current_episode < 30:
+            current_distribution = self.mode_distributions[-1] if self.mode_distributions else {"Bike": 0, "PublicTransport": 0, "Car": 0}
+            # Adjust reward multipliers based on current distribution
+            self.bike_reward_multiplier = 0.5 if current_distribution["Bike"] > 0.5 * self.num_agents else 1.0
+            self.public_transport_reward_multiplier = 1.2 if current_distribution["PublicTransport"] < 0.5 * self.num_agents else 1.0
+        else:
+            # Reset reward multipliers after warmup
+            self.bike_reward_multiplier = 1.0
+            self.public_transport_reward_multiplier = 1.0
+
         print(f"+++ Episode {self.current_episode} Started +++")
         print(f"Mode Distribution: {start_distribution}")
 
         # Reset agents for the new episode
         for agent in self.custom_agents:
-            # Compute Q-learning updates for agents
             current_state = agent.get_state()
             action = agent.last_action
-            next_state = agent.get_state()
+            next_state = current_state  # Use current state for consistency
             reward = self.compute_reward(agent)
             
             # Update Q-values
@@ -191,19 +318,19 @@ class TrafficModel(Model):
                 agent.speed *= 0.8  # Slow down motorized transport
                 
             agent.reset_for_new_episode()
-        
-        # # After loading routes
-        # print(f"Main graph has {len(self.graph.nodes)} nodes and {len(self.graph.edges)} edges.")
-        # print(f"Routes loaded: {len(self.routes)}")
-        # print(f"First few nodes: {list(self.graph.nodes)[:5]}")
-        # # Print the extracted route lengths
-        # for route_name, length in self.route_lengths.items():
-        #     print(f"Route: {route_name}, Total Length: {length:.2f} meters")
             
-        # for route_graph in self.routes:
-        #     for node in route_graph.nodes:
-        #         if node not in self.graph.nodes:
-        #             print(f"Node {node} from subgraph not in main graph!")
+            # # After loading routes
+            # print(f"Main graph has {len(self.graph.nodes)} nodes and {len(self.graph.edges)} edges.")
+            # print(f"Routes loaded: {len(self.routes)}")
+            # print(f"First few nodes: {list(self.graph.nodes)[:5]}")
+            # # Print the extracted route lengths
+            # for route_name, length in self.route_lengths.items():
+            #     print(f"Route: {route_name}, Total Length: {length:.2f} meters")
+                
+            # for route_graph in self.routes:
+            #     for node in route_graph.nodes:
+            #         if node not in self.graph.nodes:
+            #             print(f"Node {node} from subgraph not in main graph!")
         
     def agent_completed(self, agent_id):
         """
@@ -213,6 +340,7 @@ class TrafficModel(Model):
         # print(f"Agent {agent_id} has completed its journey.")
         agent = next(a for a in self.schedule.agents if a.unique_id == agent_id)
         agent.completed = True
+        
         # Set agent's last_action to a no-emission mode (e.g., "None")
         self.completed_agents += 1
 
@@ -228,7 +356,7 @@ class TrafficModel(Model):
                 for i in range(len(path) - 1)
             ]
         else:
-            print(f"Warning: Falling back to unsorted edges for {graph}.")
+            # print(f"Warning: Falling back to unsorted edges for {graph}.")
             ordered_edges = [
                 (u, v, data)
                 for u, v, data in graph.edges(data=True)
@@ -400,15 +528,50 @@ class TrafficModel(Model):
         }
 
     # print(f"Combined subgraph loaded with {len(self.combined_subgraph.nodes)} nodes and {len(self.combined_subgraph.edges)} edges.")
-    def get_episode_data(self):
+    def get_unfiltered_episode_data(self):
         """Returns the latest data for dashboard updates."""
         return {
             "co2_emissions_over_time": self.co2_emissions_over_time,
             "co2_emissions_per_episode": self.co2_emissions_per_episode,
+            "traffic_volume_per_episode": self.traffic_volume_per_episode,  # Add traffic volume data
             "current_episode": self.current_episode,
             "total_co2_emissions": self.total_co2_emissions,
         }   
-        
+
+    def get_filtered_episode_data(self, start_episode=30):
+        """
+        Returns the latest data for dashboard updates, optionally filtering episodes starting from a specific point.
+
+        Parameters:
+            start_episode (int): The episode to start filtering data from (default is 0).
+
+        Returns:
+            dict: Filtered data for dashboard updates.
+        """
+        # Filter the CO2 emissions data
+        filtered_co2_emissions_per_episode = self.co2_emissions_per_episode[start_episode:]
+
+        # Filter the cumulative CO2 emissions
+        filtered_co2_emissions_over_time = [
+            sum(self.co2_emissions_per_episode[start_episode:i + start_episode + 1])
+            for i in range(len(filtered_co2_emissions_per_episode))
+        ]
+
+        # Filter traffic volume if applicable
+        filtered_traffic_volume_per_episode = (
+            self.traffic_volume_per_episode[start_episode:] 
+            if len(self.traffic_volume_per_episode) > start_episode else []
+        )
+
+        # Return filtered data
+        return {
+            "co2_emissions_over_time": filtered_co2_emissions_over_time,
+            "co2_emissions_per_episode": filtered_co2_emissions_per_episode,
+            "traffic_volume_per_episode": filtered_traffic_volume_per_episode,  # Add traffic volume data
+            "current_episode": self.current_episode,
+            "total_co2_emissions": self.total_co2_emissions,
+        }
+
     def add_agents(self):
         """
         Add agents to the model, assigning fixed start and end nodes based on the route.
@@ -419,6 +582,11 @@ class TrafficModel(Model):
             if route_index >= len(self.route_names):
                 raise IndexError(f"Generated route_index {route_index} exceeds route_names size {len(self.route_names)}")
 
+            # if route_index == 0:
+            #     route_index = 3
+            # if route_index == 2:
+            #     route_index = 5
+                
             route_graph = self.routes[route_index]
             route_name = self.route_names[route_index]  # Full route name, e.g., "Asprela_2_Campo_Alegre_route_1"
 
@@ -438,14 +606,14 @@ class TrafficModel(Model):
                 continue
 
             # Determine household size for the agent
-            household_size = self.random.randint(1, 5)  # Random size between 1 and 5
-            self.household_sizes[i] = household_size
+            # household_size = self.random.randint(1, 5)  # Random size between 1 and 5
+            # self.household_sizes[i] = household_size
 
-            # Adjust agent speed and preferences based on environmental conditions
-            if self.hills and "Bike" in route_name:
-                agent_speed = 2.5  # Slower speed due to hills
-            else:
-                agent_speed = 3.0 if "Bike" in route_name else 4.0  # Default speeds
+            # # Adjust agent speed and preferences based on environmental conditions
+            # if self.hills and "Bike" in route_name:
+            #     agent_speed = 2.5  # Slower speed due to hills
+            # else:
+            #     agent_speed = 3.0 if "Bike" in route_name else 4.0  # Default speeds
 
             # Ensure the start and end nodes exist in the main graph
             if start_node not in self.graph.nodes or end_node not in self.graph.nodes:
@@ -477,6 +645,8 @@ class TrafficModel(Model):
                 
     def compute_reward(self, agent):
         """
+        Compute the reward for the agent based on its current mode of transport,
+        factoring in earned credits.
         Compute the reward for the agent based on its current mode of transport,
         factoring in earned credits.
         """
@@ -550,6 +720,15 @@ class TrafficModel(Model):
         agent.route_name = route_map[route_key]
         agent.route_graph = self.routes[self.route_names.index(agent.route_name)]
         
+    def update_traffic_volume(self):
+        """Calculate and update the traffic volume for the current episode."""
+        # For simplicity, we assume traffic volume is based on agents moving across routes
+        # You can customize this method to track the actual traffic volume
+        self.current_episode_traffic_volume = sum([agent.current_traffic_volume for agent in self.custom_agents])
+
+        # Store the traffic volume at the end of the episode
+        self.traffic_volume_per_episode.append(self.current_episode_traffic_volume)
+
     def step(self):
         """
         Advance the simulation by one step.
@@ -575,8 +754,8 @@ class TrafficModel(Model):
 
         # Calculate CO2 emissions for this step
         step_emissions = sum(
-            agent.distance_travelled * self.co2_factors[agent.last_action]
-            for agent in self.schedule.agents if not agent.completed
+            self.step_time *self.co2_emissions_per_mode[agent.last_action]
+            for agent in self.custom_agents if not agent.completed
         )
         # print(f"Episode {self.current_episode}, Step {self.step_count}, Step Emissions: {step_emissions}")
         # print(f"Agent States: {[agent.last_action for agent in self.schedule.agents]}")
@@ -585,17 +764,21 @@ class TrafficModel(Model):
         self.current_episode_emissions += step_emissions
         self.total_co2_emissions += step_emissions
  
-        self.step_count += 1
-
+        # After each step, update the traffic volume
+        self.update_traffic_volume()
+        
         if self.completed_agents >= self.num_agents:
             # Ensure emissions are appended only once per episode
             if len(self.co2_emissions_per_episode) <= self.current_episode:
                 self.co2_emissions_per_episode.append(self.current_episode_emissions)
 
+            # Save the current episode's summary
+            self.episode_history[self.current_episode] = self.episode_summary
+
             print(f"--- Episode {self.current_episode} Completed ---")
             print(f"CO2 Emissions This Episode: {self.current_episode_emissions}")
             
-            
+            # print(self.episode_summary)
             # Recalculate cumulative emissions
             self.co2_emissions_over_time = [
                 sum(self.co2_emissions_per_episode[:i+1])
@@ -608,6 +791,8 @@ class TrafficModel(Model):
                 self.current_episode += 1
                 self.reset_environment()
             elif self.current_episode == self.episodes - 1:
+                # print("Episode Summary with States:")
+                # pprint(self.episode_history)
                 self.simulation_finished = True
                 
         # if self.simulation_finished:
@@ -644,6 +829,15 @@ class TrafficAgent:
         self.step_cnt = 0  # Counter for the number of steps taken
         self.distance_travelled = 0.0  # Initialize distance travelled
         self.elapsed_time = 0.0
+        
+        # self.income_level = random.choice(["low", "medium", "high"])
+        # self.cluster = self.model.get_cluster(self)  # Assign the agent to a cluster
+        # self.cluster_q_table = self.model.cluster_q_tables[self.cluster]  # Reference the cluster's Q-table
+        self.alpha = self.model.alpha  # Learning rate
+        self.gamma = self.model.gamma  # Discount factor
+        self.epsilon = self.model.epsilon  # Exploration rate
+        self.q_table = {}  # Initialize the agent's Q-table
+        
         self.completed = False
         self.counted = False
         self.route_length = self.model.route_lengths[self.route_name]
@@ -653,12 +847,8 @@ class TrafficAgent:
         self.normalized_route_edges = normalized_route_edges
         self.credits = 0 #CREDIT SCHEME
 
-        #CO2 emission per km for each transport mode (CREDIT SCHEME)
-        self.co2_emissions_per_km = {
-            "Bike": 0,
-            "Car": 170,
-            "PublicTransport": 97,
-        }
+        #CO2 emission per s for each transport mode (CREDIT SCHEME)
+        self.co2_emissions_per_mode = self.model.co2_emissions_per_mode
         # HUMAN FACTOR PROPERTIES
         self.human_factor = random.uniform(0.5, 1.0)  # Resistance to change (0.5 - 1.0)
         self.defiance = random.uniform(0, 0.1)  # Small probability of defying logic (0-10%)
@@ -669,6 +859,13 @@ class TrafficAgent:
         # Extract initial transport mode from route name
         self.last_action = self.get_mode_from_route(route_name)
         
+        # states
+        self.time_pressure = ""
+        self.motivation = ""
+        self.traffic = ""
+
+        self.current_traffic_volume = 0  # Tracks the agent's contribution to traffic volume
+
         # Determine origin and destination 
         if start_node == 4523960189:
             self.origin = "Asprela"
@@ -679,11 +876,12 @@ class TrafficAgent:
     
     def calculate_co2_emissions(self): #CREDIT SCHEME
         """
-        Calculate the CO2 emissions for the distance travelled in the current step
+        Calculate the CO2 emissions for the distance travelled in the current episode
         """
-        distance_km = (self.speed * self.step_time)/1000
-        co2_emission = self.co2_emissions_per_km[self.last_action]*distance_km
+        co2_emission = self.co2_emissions_per_mode[self.last_action]*self.step_time*(self.step_cnt - 1)
         return co2_emission
+    
+    def update_credits(self, co2_emission):
     
     def update_credits(self, co2_emission):
         """
@@ -730,8 +928,9 @@ class TrafficAgent:
     def select_action(self):
         """
         Choose the next transport mode using ε-greedy policy while incorporating human factors, defiance, and credits.
+        Choose the next transport mode using ε-greedy policy while incorporating human factors, defiance, and credits.
         """
-        state = self.get_state()
+        state = str(self.get_state())
         # Ensure the state is initialized in the Q-table
         if state not in self.model.q_table:
             self.model.q_table[state] = {a: 0 for a in self.get_possible_actions()}
@@ -741,7 +940,7 @@ class TrafficAgent:
             return random.choice(self.get_possible_actions())  # Defy logic: random action
 
         # ε-greedy policy: explore or exploit
-        if random.random() < self.model.epsilon:
+        if random.random() < self.epsilon:
             return random.choice(self.get_possible_actions())  # Explore
         
         # Adjust credit influence using logarithmic scaling
@@ -758,9 +957,22 @@ class TrafficAgent:
 
     def get_state(self):
         """
-        Define the state of the agent based solely on the last chosen mode of transport.
+        Get the state of the agent based on current mode and external factors.
         """
-        return self.last_action
+        return {
+            "current_mode": self.last_action,
+            "time_pressure": self.time_pressure,
+            "motivation": self.motivation,
+            "traffic": self.traffic
+        }
+    
+    def set_state(self):
+        """
+        Define and set the state of the agent based on current mode and external factors.
+        """
+        self.time_pressure = random.choice(["early", "on-time", "late"])
+        self.motivation = random.choice(["lazy", "neutral", "motivated"])
+        self.traffic = random.choice(["low", "high"])
     
     def get_possible_actions(self):
         """Define possible actions (mocked for simplicity)."""
@@ -790,9 +1002,9 @@ class TrafficAgent:
         if state not in self.model.q_table:
             self.model.q_table[state] = {a: 0 for a in self.get_possible_actions()}
 
-        # Ensure the next state is initialized in the Q-table
-        if next_state not in self.model.q_table:
-            self.model.q_table[next_state] = {a: 0 for a in self.get_possible_actions()}
+    #         # Ensure the next state is initialized in the Q-table
+    #         if next_state_key not in self.model.q_table:
+    #             self.model.q_table[next_state_key] = {a: 0 for a in self.get_possible_actions()}
 
         # Q-learning update rule
         current_q = self.model.q_table[state][action]
@@ -826,15 +1038,15 @@ class TrafficAgent:
         self.distance_travelled += distance_this_step
         self.elapsed_time += self.step_time
 
-        #Calculate CO2 emissions and update credits (CREDIT SCHEME)
-        co2_emission = self.calculate_co2_emissions()
-        self.update_credits(co2_emission)
+        # Update traffic volume contribution
+        self.current_traffic_volume += distance_this_step  # Increment traffic volume based on distance traveled
 
         # Check if the agent has completed the route
         if self.distance_travelled >= self.route_length:
             if not self.completed:
                 self.distance_travelled = self.route_length  # Cap at total route length
-                self.completed = True
+                self.model.episode_summary["agents"][self.unique_id]["emissions"] += self.calculate_co2_emissions()
+                self.model.episode_summary["agents"][self.unique_id]["actions"].append(self.last_action)
                 self.model.agent_completed(self.unique_id)
             return
 
@@ -863,8 +1075,8 @@ class TrafficAgent:
 
 
         # Calculate progress percentage
-        progress_percentage = round((self.distance_travelled / self.route_length) * 100, 2)
-        remaining_nodes_count = self.get_remaining_nodes_count()
+        # progress_percentage = round((self.distance_travelled / self.route_length) * 100, 2)
+        # remaining_nodes_count = self.get_remaining_nodes_count()
         
         # # Debugging output
         # print(
@@ -905,9 +1117,12 @@ class TrafficAgent:
 
         # Simulate movement and completion logic
         self.move()
+
         
     def reset_for_new_episode(self):
         """Reset episode-specific attributes while retaining persistent data."""
+        if self.model.current_episode == 30:
+            self.credits = 0
         self.current_node = self.start  # Reset to start position
         self.distance_travelled = 0.0
         self.elapsed_time = 0.0
@@ -916,10 +1131,10 @@ class TrafficAgent:
         self.edge_travelled = 0.0
         self.current_edge_index = 0
         self.counted = False
+        self.current_traffic_volume = 0.0  # Reset traffic volume for the new episode
 
-        # Select transport mode for the new episode
-        self.last_action = self.select_action()
-
+        # # Select transport mode for the new episode
+        # self.last_action = self.select_action()
 
 # Main execution
 if __name__ == "__main__":
@@ -953,7 +1168,3 @@ if __name__ == "__main__":
     while not model.simulation_finished:
         model.step()
         step_count += 1
-        if episode_count != model.current_episode:
-            episode_count = model.current_episode
-            step_count = 0
-        
