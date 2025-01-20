@@ -107,7 +107,7 @@ class CongestionNetworkGrid(NetworkGrid):
             agent.credits += total_penalty
 
 class TrafficModel(Model):
-    def __init__(self, nodes_and_edges_folder, num_agents, step_time=10, episodes=100, num_clusters=3, alpha=0.15, gamma=0.9, epsilon=0.25, combined_nodes_file=None, combined_edges_file=None):
+    def __init__(self, nodes_and_edges_folder, num_agents, step_time=10, episodes=100, num_clusters=3, alpha=0.4, gamma=0.9, epsilon=1, combined_nodes_file=None, combined_edges_file=None):
         """
         Initialize the traffic model.
 
@@ -305,8 +305,8 @@ class TrafficModel(Model):
         if self.current_episode < 30:
             current_distribution = self.mode_distributions[-1] if self.mode_distributions else {"Bike": 0, "PublicTransport": 0, "Car": 0}
             # Adjust reward multipliers based on current distribution
-            self.bike_reward_multiplier = 0.8 if current_distribution["Bike"] > 0.5 * self.num_agents else 1.0
-            self.public_transport_reward_multiplier = 1.2 if current_distribution["PublicTransport"] < 0.3 * self.num_agents else 1.0
+            self.bike_reward_multiplier = 0.5 if current_distribution["Bike"] > 0.5 * self.num_agents else 1.0
+            self.public_transport_reward_multiplier = 1.2 if current_distribution["PublicTransport"] < 0.5 * self.num_agents else 1.0
         else:
             # Reset reward multipliers after warmup
             self.bike_reward_multiplier = 1.0
@@ -662,8 +662,8 @@ class TrafficModel(Model):
         action = agent.last_action
 
         base_rewards = {
-            "Bike": 2,
-            "PublicTransport": 2,
+            "Bike": 2 if self.current_episode < 30 else 4,  # Higher reward for biking during warmup
+            "PublicTransport": 2 if self.current_episode < 30 else 3,  # Higher reward for public transport during warmup
             "Car": -2,
         }
 
@@ -769,7 +769,7 @@ class TrafficModel(Model):
         
         self.step_count += 1   
         # Decay epsilon to reduce exploration over time
-        self.epsilon = max(0.1, self.epsilon * 0.99)  # Decay but keep a minimum exploration
+        self.epsilon = max(0.05, self.epsilon * 0.99)  # Decay but keep a minimum exploration
   
         # # Apply weather effects
         # if self.current_weather == "rain":
@@ -903,7 +903,7 @@ class TrafficAgent:
         self.co2_emissions_per_mode = self.model.co2_emissions_per_mode
         # HUMAN FACTOR PROPERTIES
         self.human_factor = random.uniform(0.5, 1.0)  # Resistance to change (0.5 - 1.0), i.e. "openness" towards the credit schema
-        self.defiance = random.uniform(0, 0.25)  # Small probability of defying logic (0-10%)
+        self.defiance = random.uniform(0, 0.25)  # Small probability of defying logic (0-25%)
         
         self.biking_streak = 0  # Tracks consecutive biking actions
         
