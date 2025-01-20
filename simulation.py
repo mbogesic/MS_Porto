@@ -317,13 +317,17 @@ class TrafficModel(Model):
 
         # Reset agents for the new episode
         for agent in self.custom_agents:
+            
             current_state = agent.get_state()
             action = agent.last_action
             next_state = current_state  # Use current state for consistency
-            reward = self.compute_reward(agent)
-
-            # Update Q-values
-            agent.update_q_value(current_state, action, reward, next_state)
+            
+            if self.current_episode < 30:
+                reward = self.compute_reward(agent)
+                    
+                # Update Q-values
+                agent.update_q_value(current_state, action, reward, next_state)
+                
             agent.reset_for_new_episode()
             
             # # After loading routes
