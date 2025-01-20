@@ -107,7 +107,7 @@ class CongestionNetworkGrid(NetworkGrid):
             agent.credits += total_penalty
 
 class TrafficModel(Model):
-    def __init__(self, nodes_and_edges_folder, num_agents, step_time=10, episodes=100, alpha=0.3, gamma=0.9, epsilon=0.1, combined_nodes_file=None, combined_edges_file=None):
+    def __init__(self, nodes_and_edges_folder, num_agents, step_time=10, episodes=100, num_clusters=3, alpha=0.4, gamma=0.9, epsilon=1, combined_nodes_file=None, combined_edges_file=None):
         """
         Initialize the traffic model.
 
@@ -254,8 +254,7 @@ class TrafficModel(Model):
 
         # Count mode distribution at the start of the episode
         start_distribution = {"Bike": 0, "PublicTransport": 0, "Car": 0}
-        
-        # Reduce human factor across all agents to simulate adaptability
+
         for agent in self.custom_agents:
             if self.current_episode == 30:
                 # Reproduce state from snapshot
@@ -271,18 +270,30 @@ class TrafficModel(Model):
                 agent.set_state()
 
             start_distribution[agent.last_action] += 1
-            agent.human_factor *= 0.80  # Agents adapt over time
-            agent.defiance *= 0.90  # Reduce defiance gradually over episodes
+
+            # Save the initial state of agents in Episode 0
+            if self.current_episode == 0:
+                if not hasattr(self, "initial_state_snapshot"):
+                    self.initial_state_snapshot = {}
+                self.initial_state_snapshot[agent.unique_id] = {
+                    "state": agent.get_state(),
+                    "mode": agent.last_action
+                }
+
+            self.update_route_based_on_mode_and_direction(agent, agent.last_action)
+            
+            self.episode_summary["agents"][agent.unique_id]["route"] = agent.route_name
+            agent.human_factor *= 0.998  # Agents adapt over time
 
         total_agents = len(self.custom_agents)
         bike_share = start_distribution["Bike"] / total_agents
 
         # Increase biking credits if share is below 50%
-        if bike_share < 0.5:
+        if bike_share < 0.3:
             for agent in self.custom_agents:
                 if agent.last_action == "Bike":
                     agent.credits += 5  # Extra reward for biking
-        
+
         # Store the start distribution for analysis
         self.mode_distributions.append(start_distribution)
         self.episode_summary["mode_distribution"] = start_distribution
@@ -310,13 +321,9 @@ class TrafficModel(Model):
             action = agent.last_action
             next_state = current_state  # Use current state for consistency
             reward = self.compute_reward(agent)
-            
+
             # Update Q-values
             agent.update_q_value(current_state, action, reward, next_state)
-            
-            if self.weather == "rain" or self.weather == "extreme_heat":
-                agent.speed *= 0.8  # Slow down motorized transport
-                
             agent.reset_for_new_episode()
             
             # # After loading routes
@@ -642,48 +649,72 @@ class TrafficModel(Model):
             self.custom_agents.add(agent)
             # Place the agent on the grid
             self.grid.place_agent(agent, start_node)
+            # Debugging output
+            print(f"Initialized Agent {agent.unique_id}: Start={start_node}, End={end_node}, Route={route_name}")
+
                 
     def compute_reward(self, agent):
         """
         Compute the reward for the agent based on its current mode of transport,
         factoring in earned credits.
-        Compute the reward for the agent based on its current mode of transport,
-        factoring in earned credits.
         """
+        state = agent.get_state()
+        action = agent.last_action
+
         base_rewards = {
-            "Bike": 100,               # Base reward for biking
-            "PublicTransport": 20,  # Base reward for public transport
-            "Car": -100,               # Penalty for car use
+            "Bike": 2 if self.current_episode < 30 else 4,  # Higher reward for biking during warmup
+            "PublicTransport": 2 if self.current_episode < 30 else 3,  # Higher reward for public transport during warmup
+            "Car": -2,
         }
 
+        
+        # Penalize over-reliance on a single mode
+        mode_share = self.mode_distributions[-1][agent.last_action] / self.num_agents
+        overreliance_penalty = -2 * max(0, mode_share - 0.5)  # Penalty if mode share > 50%
+
+        reward = base_rewards[action] + overreliance_penalty # Default reward + penalty
+        
         # Credits as a multiplier for biking
-        credit_factor = agent.credits / 50  # Normalize credits impact
+        credit_factor = agent.credits / 1000  # Normalize credits impact
         
         # Dynamic reward based on emissions
         emission_factor = 1.0 - (self.current_episode_emissions / max(self.total_co2_emissions, 1))
         public_transport_bonus = 2 * emission_factor  # Extra reward for low emissions
-        public_transport_usage = sum(1 for agent in self.custom_agents if agent.last_action == "PublicTransport")
-        bonus_factor = 1.0 - (public_transport_usage / len(self.custom_agents))  # More bonus for less usage
 
         # Streak multiplier for biking
-        streak_multiplier = 1 + (agent.biking_streak * 0.5)  # 50% increase per streak
+        streak_multiplier = 1 + (agent.biking_streak * 0.05)  # 10% increase per streak
         
-        if agent.biking_streak > 5:
-            agent.credits += 100  # Extra bonus for long biking streaks
-        
-        co2_penalty = agent.calculate_co2_emissions() * 0.1  # CO2 penalty
+        co2_penalty = agent.calculate_co2_emissions() * 0.01  # CO2 penalty
 
-        if agent.last_action == "Bike":
-            return (base_rewards["Bike"] * streak_multiplier + credit_factor)
-        elif agent.last_action == "PublicTransport":
-            if self.current_episode_emissions > self.total_co2_emissions * 0.75:
-                    return base_rewards["PublicTransport"] + public_transport_bonus + (bonus_factor * 10) - co2_penalty
-            else:
-                return base_rewards["PublicTransport"] - co2_penalty
-        elif agent.last_action == "Car":
-            return base_rewards["Car"] - co2_penalty # No bonus for cars
+        bike_population_ratio = self.mode_distributions[-1]["Bike"] / self.num_agents
+        biking_adjustment = max(0.3, 1.2 - bike_population_ratio)  # Reduce reward as biking share increases
+        base_rewards["Bike"] *= biking_adjustment
+        
+        # Adjust for time pressure
+        if state["time_pressure"] == "late" and action == "Bike":
+            reward -= 5  # Penalize biking when late
+        elif state["time_pressure"] == "early" and action == "Bike":
+            reward += 1  # Bonus for biking when early
+        
+        # Adjust for motivation
+        if state["motivation"] == "motivated" and action in ["Bike", "PublicTransport"]:
+            reward += 1  # Bonus for eco-friendly choices when motivated
+
+        # Adjust for traffic
+        if state["traffic"] == "high" and action == "Car":
+            reward -= 3  # Penalize car usage in high traffic
+        
+        if action != agent.get_state()["current_mode"]:
+            reward -= 20  # Increased penalty for switching modes
+     
+        if action == "Bike":
+            return (reward * streak_multiplier + credit_factor)
+        elif action == "PublicTransport":
+            return reward + public_transport_bonus
+        elif action == "Car":
+            return reward - co2_penalty # No bonus for cars
         else:
-            return base_rewards.get(agent.last_action, 0)
+            return base_rewards.get(agent.last_action, 0)  # Default reward
 
     def get_agent_credits(self): #CREDIT SCHEME
             """
@@ -736,18 +767,19 @@ class TrafficModel(Model):
         if self.simulation_finished:
             return
         
+        self.step_count += 1   
         # Decay epsilon to reduce exploration over time
-        self.epsilon = max(0.01, self.epsilon * 0.90)  # Decay but keep a minimum exploration
+        self.epsilon = max(0.05, self.epsilon * 0.99)  # Decay but keep a minimum exploration
   
-        # Apply weather effects
-        if self.weather == "rain":
-            for agent in self.schedule.agents:
-                if agent.last_action == "Bike":
-                    agent.speed *= 0.75  # Slow down bikes
-        elif self.weather == "extreme_heat":
-            for agent in self.schedule.agents:
-                if agent.last_action in ["Bike", "Walk"]:
-                    agent.speed *= 0.8  # Discourage active modes
+        # # Apply weather effects
+        # if self.current_weather == "rain":
+        #     for agent in self.schedule.agents:
+        #         if agent.last_action == "Bike":
+        #             agent.speed *= 0.75  # Slow down bikes
+        # elif self.current_weather == "extreme_heat":
+        #     for agent in self.schedule.agents:
+        #         if agent.last_action in ["Bike", "Walk"]:
+        #             agent.speed *= 0.8  # Discourage active modes
 
         # print(f"--- Step {self.step_count} in Episode {self.current_episode} ---")
         self.schedule.step()
@@ -794,14 +826,34 @@ class TrafficModel(Model):
                 # print("Episode Summary with States:")
                 # pprint(self.episode_history)
                 self.simulation_finished = True
-                
+             
         # if self.simulation_finished:
         #         # At the end of the simulation, print the final credits for all agents
         #         print(f"--- Simulation Completed ---")
         #         print(f"Final Agent Credits:")
         #         for agent in self.schedule.agents:
         #             print(f"Agent {agent.unique_id}: {agent.credits} credits")
+        
+    # def define_clusters(self):
+    #     """
+    #     Define clusters based on agent characteristics.
+    #     Returns a dictionary mapping cluster IDs to criteria.
+    #     """
+    #     return {
+    #         0: {"income": ["low"]},
+    #         1: {"income": ["medium"]},
+    #         2: {"income": ["high"]},
+    #     }
 
+    # def get_cluster(self, agent):
+    #     """
+    #     Assign an agent to a cluster based on its characteristics.
+    #     """
+    #     for cluster_id, criteria in self.cluster_definitions.items():
+    #         if agent.income_level in criteria.get("income", []):
+    #             return cluster_id
+    #     return 0  # Default to cluster 0 if no match
+    
 class TrafficAgent:
     def __init__(self, unique_id, model, start_node, end_node, route_graph, route_name, normalized_route_edges, speed=10, step_time=10):
         """
@@ -850,9 +902,8 @@ class TrafficAgent:
         #CO2 emission per s for each transport mode (CREDIT SCHEME)
         self.co2_emissions_per_mode = self.model.co2_emissions_per_mode
         # HUMAN FACTOR PROPERTIES
-        self.human_factor = random.uniform(0.5, 1.0)  # Resistance to change (0.5 - 1.0)
-        self.defiance = random.uniform(0, 0.1)  # Small probability of defying logic (0-10%)
-        self.last_action = "Car"  # Default transport mode
+        self.human_factor = random.uniform(0.5, 1.0)  # Resistance to change (0.5 - 1.0), i.e. "openness" towards the credit schema
+        self.defiance = random.uniform(0, 0.25)  # Small probability of defying logic (0-25%)
         
         self.biking_streak = 0  # Tracks consecutive biking actions
         
@@ -882,34 +933,34 @@ class TrafficAgent:
         return co2_emission
     
     def update_credits(self, co2_emission):
-    
-    def update_credits(self, co2_emission):
         """
         Update the agent's credit based on CO2 emissions, biking streak, and mode of transport.
         Reward low emissions progressively as episodes advance, with penalties for higher emissions.
         """
         # Base credit rewards by mode
         base_credits = {
-            "Bike": 100,  # Higher reward for biking
-            "PublicTransport": 30,  # Medium reward for public transport
-            "Car": -1000,  # Larger penalty for car usage
+            "Bike": 20,  # Higher reward for biking
+            "PublicTransport": 5,  # Medium reward for public transport
+            "Car": -15,  # Larger penalty for car usage
         }
 
         # Biking streak multiplier
         streak_multiplier = 1 + (self.biking_streak * 0.25)  # 25% bonus per streak
 
+
+        # Adjust credits for biking based on population share
+        bike_population_ratio = self.model.mode_distributions[-1]["Bike"] / self.model.num_agents
+        biking_adjustment = max(0.3, 1.2 - bike_population_ratio)  # Reduce reward as biking share increases
+        
         # CO2 emission-based adjustment
-        co2_penalty = co2_emission * 0.15  # Increased penalty for emissions
+        co2_penalty = co2_emission * 0.1  # Increased penalty for emissions
         
         # CO2 savings bonus compared to cars
         co2_savings_bonus = 10 if self.last_action == "PublicTransport" and co2_emission < 50 else 0
 
         # Credits calculation
         if self.last_action == "Bike":
-            if self.biking_streak > 5:
-                    self.credits += base_credits["Bike"] * streak_multiplier * (1.5 + 0.1 * (self.biking_streak - 5))  # Exponential bonus
-            else:
-                self.credits += base_credits["Bike"] * streak_multiplier * 1.5
+            self.credits += (base_credits["Bike"] * streak_multiplier * biking_adjustment)
         elif self.last_action == "PublicTransport":
             self.credits += (base_credits["PublicTransport"] + co2_savings_bonus - co2_penalty) * 1.2 # Apply a 20% multiplier
         elif self.last_action == "Car":
@@ -918,7 +969,7 @@ class TrafficAgent:
             self.credits += -co2_penalty
 
         if self.last_action == "Bike" and self.model.current_episode_emissions > self.model.total_co2_emissions * 0.8:
-            self.credits += 20  # Extra bonus for biking when emissions are high
+            self.credits += 5  # Extra bonus for biking when emissions are high
 
         
         # Ensure credits don't drop below zero
@@ -928,31 +979,40 @@ class TrafficAgent:
     def select_action(self):
         """
         Choose the next transport mode using ε-greedy policy while incorporating human factors, defiance, and credits.
-        Choose the next transport mode using ε-greedy policy while incorporating human factors, defiance, and credits.
         """
         state = str(self.get_state())
         # Ensure the state is initialized in the Q-table
-        if state not in self.model.q_table:
-            self.model.q_table[state] = {a: 0 for a in self.get_possible_actions()}
+        # if state not in self.model.q_table:
+        #     self.model.q_table[state] = {a: 0 for a in self.get_possible_actions()}
+        # if state not in self.cluster_q_table:
+        #     self.cluster_q_table[state] = {a: 0 for a in self.get_possible_actions()}
+        if state not in self.q_table:
+            self.q_table[state] = {a: 0 for a in self.get_possible_actions()}
 
-        # Check for defiance (irrational decision-making)
-        if random.random() < self.defiance:
-            return random.choice(self.get_possible_actions())  # Defy logic: random action
-
-        # ε-greedy policy: explore or exploit
-        if random.random() < self.epsilon:
-            return random.choice(self.get_possible_actions())  # Explore
-        
         # Adjust credit influence using logarithmic scaling
         credit_influence = (self.credits / 50) if self.credits < 500 else (500 + (self.credits - 500) ** 0.5)
 
-        # Incorporate credits into Q-value exploitation
-        best_action = max(
-            self.get_possible_actions(),
-            key=lambda action: self.model.q_table[state][action]  * max(1 - self.human_factor, 0.5) + (credit_influence if action == "Bike" else 0)
-        )
-        
+        # Ensure the state is initialized in the Q-table
+        # if state not in self.model.q_table:
+        #     self.model.q_table[state] = {a: 0 for a in self.get_possible_actions()}
+        # Check for defiance (irrational decision-making)
+        if random.random() < self.defiance:
+            # Defy logic: pick a random action regardless of Q-values
+            return random.choice(self.get_possible_actions())
+        # ε-greedy policy: explore or exploit
+        if random.random() < self.epsilon:
+            return random.choice(self.get_possible_actions())  # Explore
+        # Incorporate human factor into exploitation
+        best_action = max(self.get_possible_actions(), 
+                        key=lambda action: self.q_table[state][action] * (1 - self.human_factor * 0.5))
         return best_action
+        # Exploit
+        # If cluster q_table is preferred:
+        #elif:
+            #return max(self.cluster_q_table[state], key=self.q_table[state].get)  # Exploit
+            # If individual q_table is preferred:
+        #else:
+            #return max(self.q_table[state], key=self.q_table[state].get)  # Exploit
 
 
     def get_state(self):
@@ -988,29 +1048,104 @@ class TrafficAgent:
             return "PublicTransport"
         else:
             raise ValueError(f"Unknown transport mode in route name: {route_name}")
-
-    def update_q_value(self, state, action, reward, next_state):
-        """
-        Update the Q-value for the chosen mode of transport.
-        Includes credits as a factor in the reward.
-        """
         
-        # Normalize credits to scale the reward
-        reward_with_credits = reward + (self.credits / 10)
+    def update_q_value(self, state, action, reward, next_state):
+        state_key = str(state)
+        next_state_key = str(next_state)
+        
+        # Initialize Q-tables if state keys are not present
+        if state_key not in self.q_table:
+            self.q_table[state_key] = {a: 0 for a in self.get_possible_actions()}
+        if next_state_key not in self.q_table:
+            self.q_table[next_state_key] = {a: 0 for a in self.get_possible_actions()}
+        
+        # global_q_table = self.model.q_table  # Access global Q-table
+        # if state_key not in global_q_table:
+        #     global_q_table[state_key] = {a: 0 for a in self.get_possible_actions()}
+        # if next_state_key not in global_q_table:
+        #     global_q_table[next_state_key] = {a: 0 for a in self.get_possible_actions()}
+        
+        # Q-value calculation
+        current_q = self.q_table[state_key][action]
+        max_next_q = max(self.q_table[next_state_key].values(), default=0)
+        # global_q = global_q_table[state_key][action]
+        # global_max_next_q = max(global_q_table[next_state_key].values(), default=0)
+        
+        # # Calculate blended Q-value
+        # blend_factor = min(1, self.model.current_episode / 30)  # Gradually increase blend factor
+        # blended_q = blend_factor * current_q + (1 - blend_factor) * global_q
+        # blended_max_next_q = blend_factor * max_next_q + (1 - blend_factor) * global_max_next_q
+        
+        # self.q_table[state_key][action] = blended_q + self.alpha * (reward + self.gamma * blended_max_next_q - blended_q)
 
-        # Ensure the current state is initialized in the Q-table
-        if state not in self.model.q_table:
-            self.model.q_table[state] = {a: 0 for a in self.get_possible_actions()}
+    # def update_q_value(self, state, action, reward, next_state):
+    #     """
+    #     Update the Q-value for the chosen mode of transport.
+    #     Includes credits as a factor in the reward.
+    #     """
+    #     # Serialize state and next_state to make them hashable
+    #     state_key = str(state)
+    #     next_state_key = str(next_state)
+    
+    #     ## WARMUP PHASE DONE ##
+    #     if self.model.current_episode == 30: 
+    #         # Q-learning update rule
+    #         # Normalize credits to scale the reward
+    #         reward_with_credits = reward + (self.credits / 100)
+            
+    #         if state_key not in self.q_table:
+    #             self.q_table[state_key] = {a: 0 for a in self.get_possible_actions()}
+    #         if next_state_key not in self.q_table:
+    #             self.q_table[next_state_key] = {a: 0 for a in self.get_possible_actions()}
+            
+    #         current_q = self.model.q_table[state_key][action]
+    #         max_next_q = max(self.model.q_table[next_state_key].values(), default=0)
+    #         self.q_table[state_key][action] = current_q + self.alpha * (reward_with_credits + self.gamma * max_next_q - current_q)
+            
+    #     if self.model.current_episode < 30:
+    #         ## MODEL ##
+            
+    #         # Normalize credits to scale the reward
+    #         reward_with_credits = reward + (self.credits / 100)
+
+    #         # Ensure the current state is initialized in the Q-table
+    #         if state_key not in self.model.q_table:
+    #             self.model.q_table[state_key] = {a: 0 for a in self.get_possible_actions()}
 
     #         # Ensure the next state is initialized in the Q-table
     #         if next_state_key not in self.model.q_table:
     #             self.model.q_table[next_state_key] = {a: 0 for a in self.get_possible_actions()}
 
-        # Q-learning update rule
-        current_q = self.model.q_table[state][action]
-        max_next_q = max(self.model.q_table[next_state].values(), default=0)
-        self.model.q_table[state][action] = current_q + self.model.alpha * (reward_with_credits + self.model.gamma * max_next_q - current_q)
+    #         # Q-learning update rule
+    #         current_q = self.model.q_table[state_key][action]
+    #         max_next_q = max(self.model.q_table[next_state_key].values(), default=0)
+    #         self.model.q_table[state_key][action] = current_q + self.model.alpha * (reward_with_credits + self.model.gamma * max_next_q - current_q)
+            
+    #     else:  
+    #         ## CLUSTER ##
+            # Normalize credits to scale the reward
+        reward_with_credits = reward + (self.credits / 100)
+        
+#         # if state not in self.cluster_q_table:
+#         #     self.cluster_q_table[state_key] = {a: 0 for a in self.get_possible_actions()}
+#         # if next_state_key not in self.cluster_q_table:
+#         #     self.cluster_q_table[next_state_key] = {a: 0 for a in self.get_possible_actions()}
 
+#         # # Q-learning update rule
+#         # current_q = self.cluster_q_table[state_key][action]
+#         # max_next_q = max(self.cluster_q_table[next_state_key].values(), default=0)
+#         # self.cluster_q_table[state_key][action] = current_q + self.model.alpha * (reward_with_credits + self.model.gamma * max_next_q - current_q)
+        
+        ## INDIVIDUAL ##
+        if state_key not in self.q_table:
+            self.q_table[state_key] = {a: 0 for a in self.get_possible_actions()}
+        if next_state_key not in self.q_table:
+            self.q_table[next_state_key] = {a: 0 for a in self.get_possible_actions()}
+
+        # Q-learning update rule
+        current_q = self.q_table[state_key][action]
+        max_next_q = max(self.q_table[next_state_key].values(), default=0)
+        self.q_table[state_key][action] = current_q + self.alpha * (reward_with_credits + self.gamma * max_next_q - current_q)
 
     def get_assigned_route_edges(self):
         """
@@ -1089,32 +1224,37 @@ class TrafficAgent:
         """
         Execute a step in the agent's decision-making process.
         """
-        if self.completed:
-            return
+        current_state = str(self.get_state())  # Serialize the state for consistency
+        # Log the state only once per episode
+        if not self.model.episode_summary["agents"][self.unique_id]["states"]:
+            self.model.episode_summary["agents"][self.unique_id]["states"].append(current_state)
+        if self.completed and not self.counted:
+                # Update Q-value for the chosen action
+                self.update_credits(self.calculate_co2_emissions())  # Update credits based on CO2 emissions
+                reward = self.model.compute_reward(self)  # Compute reward for the current mode
+                # Log the state
+                self.model.episode_summary["agents"][self.unique_id]["rewards"] += reward
+                self.model.episode_summary["agents"][self.unique_id]["credits"] += self.credits
 
-        # Update Q-value for the chosen action
-        current_state = self.get_state()
-        reward = self.model.compute_reward(self)  # Compute reward for the current mode
-        next_action = self.select_action()  #HUMAN FACTOR
-        self.update_q_value(current_state, self.last_action, reward, next_action)  # Next state is the same as selected mode
-        
-        # Update biking streak only if mode remains Bike
-        if next_action == "Bike":
-            if self.last_action == "Bike":
-                self.biking_streak += 1  # Increment streak
-            else:
-                self.biking_streak = 1  # Start a new streak
-        else:
-            self.biking_streak = 0  # Reset streak if switching mode
-        
-        if self.last_action != "Car" and next_action == "Car":
-            self.credits -= 20  # Penalty for regressing to car use
+                
+                next_action = self.select_action()  #HUMAN FACTOR
+                self.update_q_value(current_state, self.last_action, reward, next_action)  # Next state is the same as selected mode
+                
+                # Update biking streak only if mode remains Bike
+                if next_action == "Bike":
+                    if self.last_action == "Bike":
+                        self.biking_streak += 1  # Increment streak
+                    else:
+                        self.biking_streak = 1  # Start a new streak
+                else:
+                    self.biking_streak = 0  # Reset streak if switching mode
+                
+                if self.last_action != "Car" and next_action == "Car":
+                    self.credits -= 20  # Penalty for regressing to car use
+                
+                self.last_action = next_action #HUMAN FACTOR
+                self.counted = True
             
-        if self.last_action == "Bike" and next_action != "Bike":
-             self.credits -= 100  # Penalty for switching away from biking
-
-        self.last_action = next_action #HUMAN FACTOR
-
         # Simulate movement and completion logic
         self.move()
 
@@ -1142,9 +1282,9 @@ if __name__ == "__main__":
     nodes_and_edges_folder = "nodes_and_edges"
     combined_nodes_file = os.path.join(nodes_and_edges_folder, "all_routes_combined_nodes.csv")
     combined_edges_file = os.path.join(nodes_and_edges_folder, "all_routes_combined_edges.csv")
-    num_agents = 1000
-    step_time_dimension = 60.0   # s/step aka the "resolution" of the simulation
-    episodes = 30
+    num_agents = 100
+    step_time_dimension = 10.0   # s/step aka the "resolution" of the simulation
+    episodes = 50
 
     # Initialize the model
     model = TrafficModel(

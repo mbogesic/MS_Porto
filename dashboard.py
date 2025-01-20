@@ -68,24 +68,87 @@ app.layout = html.Div([
     dcc.Graph(id="credits-plot", style={"width": "100%", "height": "400px"}),
     dcc.Interval(
         id="interval-component",
-<<<<<<< HEAD
-        interval=1000,  # 1000ms = 1 second
-        n_intervals=0,
-        disabled=False
-=======
         interval=1000,
         n_intervals=0,
         disabled=model.simulation_finished
->>>>>>> origin/Experimental-Branch
     ),
 ])
 
 @app.callback(
-<<<<<<< HEAD
-    [Output("metric-plot", "figure"), 
-    Output("episode-plot", "figure"), 
-    Output("credits-plot", "figure"),  # Include the credits plot
-    Output("interval-component", "disabled")],
+    Output('episode-details', 'children'),
+    Input('episode-dropdown', 'value')
+)
+def display_episode_details(selected_episode):
+    if selected_episode is None:
+        return html.Div("Select an episode to see its mode distribution.",
+                        style={'color': 'blue', 'fontSize': 16, 'textAlign': 'center'})
+
+    episode_data = model.episode_history.get(selected_episode, {})
+    mode_distribution = episode_data.get("mode_distribution", {})
+
+    mode_summary = [
+        html.P(f"{mode}: {count}") for mode, count in mode_distribution.items()
+    ]
+    return html.Div(mode_summary, style={'textAlign': 'left', 'margin': '10px'})
+
+@app.callback(
+    Output('episode-dropdown', 'options'),
+    Input('interval-component', 'n_intervals')
+)
+def update_dropdown_options(n_intervals):
+    if not model.simulation_finished:
+        return []
+
+    # Dynamically populate dropdown options with "WARMUP" for episodes below 30
+    dropdown_options = [
+        {
+            'label': f"Episode {ep_id} {'(WARMUP)' if ep_id < 30 else ''}",
+            'value': ep_id
+        }
+        for ep_id in model.episode_history.keys()
+    ]
+    print("Dropdown Options Updated:", dropdown_options)  # Debugging
+    return dropdown_options
+
+@app.callback(
+    Output('agent-dropdown', 'options'),
+    Input('episode-dropdown', 'value')
+)
+def update_agent_dropdown(selected_episode):
+    if selected_episode is None:
+        return []
+
+    episode_data = model.episode_history.get(selected_episode, {})
+    sorted_agents = sorted(episode_data.get("agents", {}).keys())
+    agent_options = [{'label': f"Agent {agent_id}", 'value': agent_id} for agent_id in sorted_agents]
+    return agent_options
+
+@app.callback(
+    Output('agent-details', 'children'),
+    Input('agent-dropdown', 'value'),
+    State('episode-dropdown', 'value')
+)
+def display_agent_details(selected_agent, selected_episode):
+    if selected_agent is None or selected_episode is None:
+        return html.Div("Select an episode and an agent to view details.")
+
+    episode_data = model.episode_history.get(selected_episode, {})
+    agent_data = episode_data["agents"].get(selected_agent, {})
+
+    agent_summary = [
+        html.P(f"{key}: {value}") for key, value in agent_data.items()
+    ]
+    return html.Div(agent_summary, style={'textAlign': 'left', 'margin': '10px'})
+
+
+@app.callback(
+    [Output("metric-plot", "figure"),
+     Output("episode-plot", "figure"),
+     Output("mode-distribution-plot", "figure"),
+    #  Output("traffic-volume-reduction-plot", "figure"),
+     Output("cumulative-credits-plot", "figure"),
+     Output("credits-plot", "figure"),
+     Output("interval-component", "disabled")],  # Stop interval when simulation is done
     [Input("interval-component", "n_intervals")]
 )
 def update_plots(n_intervals):
@@ -147,24 +210,6 @@ def update_plots(n_intervals):
                 yaxis=dict(title="CO2 Emissions (g)"),
             )
         )
-<<<<<<< HEAD
-        return cumulative_plot, episode_plot, credits_plot, True
-    else:
-        # Show a placeholder plot if the simulation is not finished
-        credits_plot = go.Figure(
-            data=[go.Bar(
-                x=[],
-                y=[],
-                name="Agent Credits"
-            )],
-            layout=go.Layout(
-                title="Agent Credits",
-                xaxis=dict(title="Agent IDs"),
-                yaxis=dict(title="Credits")
-            )
-        )
-        return cumulative_plot, episode_plot, credits_plot, False
-=======
 
 
         episode_plot = go.Figure(
@@ -282,7 +327,6 @@ def update_plots(n_intervals):
     else:
         # Continue with normal updates
         return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, False
->>>>>>> origin/Experimental-Branch
 
 if __name__ == "__main__":
    
