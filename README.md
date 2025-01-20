@@ -16,7 +16,7 @@
 6. Tweak `num_agents` and `episodes` variables in lines 25/26 to your liking. Default is 1000 agents and 60 episodes (currently only the baseline model available).    (OPTIONAL)
 
 ## Running Simulation
-1. Run ```dashboard.py``` in your IDE of choice (we use VSCode) or `./dashboard.py`.
+1. Run ```dashboard.py``` in your IDE of choice (we use VSCode) or `python dashboard.py` / `python3 dashboard.py` .
 2. `pip install` all eventual necessary modules if necessary
 3. Validate if the following is visible in your console:
     ```
