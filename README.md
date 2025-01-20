@@ -10,7 +10,11 @@
 
 1. `git clone https://github.com/mbogesic/MS_Porto`
 2. `cd MS_Porto`
-3. Tweak `num_agents` and `episodes` variables in lines 25/26 to your liking (currently only the baseline model available)
+   (OPTIONAL)
+3. Open `simulation.py`.
+4. Tweak `compute_reward()` and `update_credits()` functions to your liking to test/add different policies(currently only the baseline model available).   
+5. Open `dashboard.py`.
+6. Tweak `num_agents` and `episodes` variables in lines 25/26 to your liking (currently only the baseline model available).
 
 ## Running Simulation
 1. Run ```dashboard.py``` in your IDE of choice (we use VSCode) or `./dashboard.py`.
