@@ -179,7 +179,7 @@ class TrafficModel(Model):
         # self.congestion_charges =0.0
 
         # Q-table: Nested dictionary for state-action pairs
-        self.q_table = {}
+        # self.q_table = {}
         
         # Load routes and agents
         self.load_routes()
@@ -982,8 +982,8 @@ class TrafficAgent:
         """
         state = str(self.get_state())
         # Ensure the state is initialized in the Q-table
-        if state not in self.model.q_table:
-            self.model.q_table[state] = {a: 0 for a in self.get_possible_actions()}
+        # if state not in self.model.q_table:
+        #     self.model.q_table[state] = {a: 0 for a in self.get_possible_actions()}
         # if state not in self.cluster_q_table:
         #     self.cluster_q_table[state] = {a: 0 for a in self.get_possible_actions()}
         if state not in self.q_table:
@@ -993,18 +993,18 @@ class TrafficAgent:
         credit_influence = (self.credits / 50) if self.credits < 500 else (500 + (self.credits - 500) ** 0.5)
 
         # Ensure the state is initialized in the Q-table
-        if state not in self.model.q_table:
-            self.model.q_table[state] = {a: 0 for a in self.get_possible_actions()}
+        # if state not in self.model.q_table:
+        #     self.model.q_table[state] = {a: 0 for a in self.get_possible_actions()}
         # Check for defiance (irrational decision-making)
         if random.random() < self.defiance:
             # Defy logic: pick a random action regardless of Q-values
             return random.choice(self.get_possible_actions())
         # ε-greedy policy: explore or exploit
-        if random.random() < self.model.epsilon:
+        if random.random() < self.epsilon:
             return random.choice(self.get_possible_actions())  # Explore
         # Incorporate human factor into exploitation
         best_action = max(self.get_possible_actions(), 
-                        key=lambda action: self.model.q_table[state][action] * (1 - self.human_factor * 0.5))
+                        key=lambda action: self.q_table[state][action] * (1 - self.human_factor * 0.5))
         return best_action
         # Exploit
         # If cluster q_table is preferred:
@@ -1059,24 +1059,24 @@ class TrafficAgent:
         if next_state_key not in self.q_table:
             self.q_table[next_state_key] = {a: 0 for a in self.get_possible_actions()}
         
-        global_q_table = self.model.q_table  # Access global Q-table
-        if state_key not in global_q_table:
-            global_q_table[state_key] = {a: 0 for a in self.get_possible_actions()}
-        if next_state_key not in global_q_table:
-            global_q_table[next_state_key] = {a: 0 for a in self.get_possible_actions()}
+        # global_q_table = self.model.q_table  # Access global Q-table
+        # if state_key not in global_q_table:
+        #     global_q_table[state_key] = {a: 0 for a in self.get_possible_actions()}
+        # if next_state_key not in global_q_table:
+        #     global_q_table[next_state_key] = {a: 0 for a in self.get_possible_actions()}
         
         # Q-value calculation
         current_q = self.q_table[state_key][action]
         max_next_q = max(self.q_table[next_state_key].values(), default=0)
-        global_q = global_q_table[state_key][action]
-        global_max_next_q = max(global_q_table[next_state_key].values(), default=0)
+        # global_q = global_q_table[state_key][action]
+        # global_max_next_q = max(global_q_table[next_state_key].values(), default=0)
         
-        # Calculate blended Q-value
-        blend_factor = min(1, self.model.current_episode / 30)  # Gradually increase blend factor
-        blended_q = blend_factor * current_q + (1 - blend_factor) * global_q
-        blended_max_next_q = blend_factor * max_next_q + (1 - blend_factor) * global_max_next_q
+        # # Calculate blended Q-value
+        # blend_factor = min(1, self.model.current_episode / 30)  # Gradually increase blend factor
+        # blended_q = blend_factor * current_q + (1 - blend_factor) * global_q
+        # blended_max_next_q = blend_factor * max_next_q + (1 - blend_factor) * global_max_next_q
         
-        self.q_table[state_key][action] = blended_q + self.alpha * (reward + self.gamma * blended_max_next_q - blended_q)
+        # self.q_table[state_key][action] = blended_q + self.alpha * (reward + self.gamma * blended_max_next_q - blended_q)
 
     # def update_q_value(self, state, action, reward, next_state):
     #     """
@@ -1123,29 +1123,29 @@ class TrafficAgent:
             
     #     else:  
     #         ## CLUSTER ##
-    #         # Normalize credits to scale the reward
-    #         reward_with_credits = reward + (self.credits / 100)
-            
-    #         # if state not in self.cluster_q_table:
-    #         #     self.cluster_q_table[state_key] = {a: 0 for a in self.get_possible_actions()}
-    #         # if next_state_key not in self.cluster_q_table:
-    #         #     self.cluster_q_table[next_state_key] = {a: 0 for a in self.get_possible_actions()}
+            # Normalize credits to scale the reward
+        reward_with_credits = reward + (self.credits / 100)
+        
+#         # if state not in self.cluster_q_table:
+#         #     self.cluster_q_table[state_key] = {a: 0 for a in self.get_possible_actions()}
+#         # if next_state_key not in self.cluster_q_table:
+#         #     self.cluster_q_table[next_state_key] = {a: 0 for a in self.get_possible_actions()}
 
-    #         # # Q-learning update rule
-    #         # current_q = self.cluster_q_table[state_key][action]
-    #         # max_next_q = max(self.cluster_q_table[next_state_key].values(), default=0)
-    #         # self.cluster_q_table[state_key][action] = current_q + self.model.alpha * (reward_with_credits + self.model.gamma * max_next_q - current_q)
-            
-    #         ## INDIVIDUAL ##
-    #         if state_key not in self.q_table:
-    #             self.q_table[state_key] = {a: 0 for a in self.get_possible_actions()}
-    #         if next_state_key not in self.q_table:
-    #             self.q_table[next_state_key] = {a: 0 for a in self.get_possible_actions()}
+#         # # Q-learning update rule
+#         # current_q = self.cluster_q_table[state_key][action]
+#         # max_next_q = max(self.cluster_q_table[next_state_key].values(), default=0)
+#         # self.cluster_q_table[state_key][action] = current_q + self.model.alpha * (reward_with_credits + self.model.gamma * max_next_q - current_q)
+        
+        ## INDIVIDUAL ##
+        if state_key not in self.q_table:
+            self.q_table[state_key] = {a: 0 for a in self.get_possible_actions()}
+        if next_state_key not in self.q_table:
+            self.q_table[next_state_key] = {a: 0 for a in self.get_possible_actions()}
 
-    #         # Q-learning update rule
-    #         current_q = self.q_table[state_key][action]
-    #         max_next_q = max(self.q_table[next_state_key].values(), default=0)
-    #         self.q_table[state_key][action] = current_q + self.alpha * (reward_with_credits + self.gamma * max_next_q - current_q)
+        # Q-learning update rule
+        current_q = self.q_table[state_key][action]
+        max_next_q = max(self.q_table[next_state_key].values(), default=0)
+        self.q_table[state_key][action] = current_q + self.alpha * (reward_with_credits + self.gamma * max_next_q - current_q)
 
     def get_assigned_route_edges(self):
         """
